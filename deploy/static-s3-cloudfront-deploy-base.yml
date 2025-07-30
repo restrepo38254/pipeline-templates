@@ -1,0 +1,107 @@
+parameters:
+  - name: awsServiceConnectionEnvironment
+    type: string
+  - name: awsServiceConnectionCloudfront
+    type: string
+  - name: s3BucketName
+    type: string
+  - name: cloudfrontDistributionId
+    type: string
+  - name: projectName
+    type: string
+  - name: environment
+    type: string
+  - name: localPathToUpload
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/dist/'
+  - name: npmCommandsWorkingDir
+    type: string
+    default: '$(System.DefaultWorkingDirectory)'
+  - name: npmCommandToRun
+    type: string
+    default: 'run build'
+  - name: previousJob
+    type: string
+    default: ''
+  - name: versionNode
+    type: string
+    default: '14.x'
+  - name: npmauth
+    type: boolean
+    default: true
+  - name: s3artifactfolder
+    type: string
+  - name: s3BucketArtifact
+    type: string
+  - name: ambiente
+    type: string
+    default: 'qa'
+  - name: workingFile
+    type: string
+    default: 'callcenter/.npmrc'
+
+jobs:
+  - deployment: DeployS3
+    ${{ if ne(parameters.previousJob, '') }}:
+      dependsOn: '${{ parameters.previousJob }}'
+    displayName: Deploy to S3
+    # pool: Novaventa2
+    environment: ${{ parameters.projectName }}-${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+            - task: NodeTool@0
+              inputs:
+                versionSpec: '${{ parameters.versionNode }}'
+            - ${{ if eq(parameters.npmauth, 'true') }}:
+              - task: npmAuthenticate@0
+                displayName: 'npm Authenticate'
+                inputs:
+                  workingFile: ${{ parameters.workingFile }}
+
+            - task: Npm@1
+              inputs:
+                command: 'install'
+                workingDir: '${{ parameters.npmCommandsWorkingDir }}'
+              displayName: Install NPM dependencies
+            
+            - task: Npm@1
+              inputs:
+                command: 'custom'
+                workingDir: '${{ parameters.npmCommandsWorkingDir }}'
+                customCommand: '${{ parameters.npmCommandToRun }}'
+                verbose: true
+              displayName: Build frontend
+
+            - task: S3Upload@1
+              inputs:
+                awsCredentials: '${{ parameters.awsServiceConnectionEnvironment }}'
+                regionName: 'us-east-1'
+                bucketName: '${{ parameters.s3BucketName }}'
+                sourceFolder: '${{ parameters.localPathToUpload }}'
+                globExpressions: '**'
+                createBucket: true
+              displayName: Upload to S3     
+
+            - task: S3Upload@1
+              inputs:
+                awsCredentials: '${{ parameters.awsServiceConnectionEnvironment }}'
+                regionName: 'us-east-1'
+                bucketName: '${{ parameters.s3BucketArtifact }}'
+                sourceFolder: '${{ parameters.localPathToUpload }}'
+                targetFolder: '${{ parameters.s3artifactfolder }}$(Build.BuildNumber)-${{ parameters.ambiente }}'
+                globExpressions: '**'
+                createBucket: true
+              displayName: Upload to S3 Artifact Folder
+            
+                     
+            - task: AWSCLI@1
+              inputs:
+                awsCredentials: '${{ parameters.awsServiceConnectionCloudfront }}'
+                regionName: 'us-east-1'
+                awsCommand: 'cloudfront'
+                awsSubCommand: 'create-invalidation'
+                awsArguments: '--distribution-id ${{ parameters.cloudfrontDistributionId }} --paths /*'
+              displayName: Generate invalidation

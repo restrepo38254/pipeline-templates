@@ -1,0 +1,567 @@
+# ---------------------------------------------------------------------------------|
+#                NUTRESA AZURE DEVOPS | DEPLOY-FRONT-IAC-AWS                       |
+# Fabrica: NetW Consulting S.A.S & New Inntech S.A.S                               |
+# Contacto: mailto:gerencia@newinntech.com                                         |
+# Fecha: 2 de Ablil 2025                                                           |
+# ---------------------------------------------------------------------------------|
+
+parameters:
+  - name: pathCoverage
+    type: string
+  - name: downloadArtifact
+    type: boolean
+    default: true
+  - name: uploadArtifact
+    type: boolean
+    default: true
+  - name: key
+    type: string
+    default: 'javascript'
+  - name: deepsource_dsn
+    type: string
+
+
+
+steps:
+
+
+  - task: DownloadBuildArtifacts@1
+    condition: eq('${{ parameters.downloadArtifact }}', true)
+    inputs:
+      artifactName: 'AfterTestResults'
+      downloadPath: '$(System.DefaultWorkingDirectory)'
+
+  - script: |
+      
+      #curl https://deepsource.io/cli | sh        
+      curl -sSL https://deepsource.io/cli | sh  
+      
+      ./bin/deepsource --help    
+      ./bin/deepsource version
+
+    displayName: 'Deep source install'
+    continueOnError: true
+
+  - script: |  
+      ls -la $(System.DefaultWorkingDirectory)
+      ./bin/deepsource report --analyzer test-coverage --key ${{parameters.key}} --value-file $(System.DefaultWorkingDirectory)/${{parameters.pathCoverage}}
+    displayName: 'Upload coverage'
+    condition: eq('${{ parameters.uploadArtifact }}', true)
+    env:
+      DEEPSOURCE_DSN: '${{ parameters.deepsource_dsn }}'
+    continueOnError: false
+
+  # - script: |              
+
+  #     ##owasp10
+  #     curl 'https://api.deepsource.io/graphql/' \
+  #     -X POST \
+  #     -H 'Authorization: Bearer $(DEEPSOURCE_TOKEN)' \
+  #     -H 'accept: application/json' \
+  #     -H 'content-type: application/json' \
+  #     --data 	'{"query": "query { repository(name:\"$(Build.Repository.Name)\", login:\"GrupoNutresa\", vcsProvider:ADS) { name, vcsUrl, latestCommitOid, reports{owaspTop10 {key, title, currentValue, status, securityIssueStats {key, title, occurrence{ critical, major, minor, total }},  trends {label, value, changePercentage }     }}}}"}' | jq .
+
+  #   displayName: 'OWASP Top 10 report'
+  #   continueOnError: true
+
+  # - script: |              
+
+  #     curl 'https://api.deepsource.io/graphql/' \
+  #     -X POST \
+  #     -H 'Authorization: Bearer $(DEEPSOURCE_TOKEN)' \
+  #     -H 'accept: application/json' \
+  #     -H 'content-type: application/json' \
+  #     --data 	'{"query": "query { repository(name:\"$(Build.Repository.Name)\", login:\"GrupoNutresa\", vcsProvider:ADS) { name, vcsUrl, latestCommitOid, issues{ totalCount, edges{node {issue{shortcode, title, category, severity, analyzer{name}, shortDescription }}} } } }"}' | jq .
+
+  #   displayName: 'Get issues'
+  #   continueOnError: true
+    
+  - script: |
+      echo -e "\033[36m╔══════════════════════════════════════════════════════╗\033[0m"
+      echo -e "\033[36m║ \033[37m📊 COBERTURA DE CÓDIGO \033[36m║ \033[32mDEEPSOURCE\033[0m"
+      echo -e "\033[36m╚══════════════════════════════════════════════════════╝\033[0m"
+
+      # Obtener datos de la API
+      REPORT=$(curl -sS 'https://api.deepsource.io/graphql/' \
+        -X POST \
+        -H "Authorization: Bearer $(deepsource_token)" \
+        -H "accept: application/json" \
+        -H "content-type: application/json" \
+        --data "{\"query\": \"query { repository(name:\\\"$(Build.Repository.Name)\\\", login:\\\"GrupoNutresa\\\", vcsProvider:ADS) { name, metrics { name, shortcode, isThresholdEnforced, items { key, threshold, latestValue, latestValueDisplay, thresholdStatus } } } }\"}")
+
+      # Debug: Mostrar respuesta cruda de la API (opcional)
+      # echo "$REPORT"
+
+      # Verificar respuesta válida
+      if ! echo "$REPORT" | jq -e '.data.repository.metrics' > /dev/null 2>&1; then
+        echo -e "\033[31m⚠️ Error: Respuesta inválida de DeepSource\033[0m"
+        echo "$REPORT"
+        exit 1
+      fi
+
+      # Procesar cada métrica
+      for METRIC in CPCV BCV LCV DCV; do
+        METRIC_JSON=$(echo "$REPORT" | jq -c ".data.repository.metrics[] | select(.shortcode==\"$METRIC\")")
+        
+        if [ -n "$METRIC_JSON" ]; then
+          METRIC_NAME=$(echo "$METRIC_JSON" | jq -r '.name')
+          echo -e "\033[33m▌$METRIC_NAME ($METRIC)\033[0m"
+          
+          ITEMS=$(echo "$METRIC_JSON" | jq -r '.items[] | select(.latestValue!=null)')
+          if [ -z "$ITEMS" ]; then
+            echo "  No hay datos disponibles."
+          else
+            echo "$ITEMS" | jq -r '
+              "| \(.key): " + 
+              (if .thresholdStatus=="PASSING" then "\u001b[32m" 
+              elif .thresholdStatus=="FAILING" then "\u001b[31m" 
+              else "\u001b[37m" end) + 
+              "\(.latestValueDisplay)\u001b[0m \u001b[2m(Umbral: \(.threshold//"N/A")%)\u001b[0m"' | while read -r LINE; do
+                printf "%b\n" "$LINE"
+              done
+          fi
+          echo ""
+        fi
+      done
+
+      # Manejo especial para CPCV
+      CPCV_ITEM=$(echo "$REPORT" | jq -r '.data.repository.metrics[] | select(.shortcode=="CPCV") | .items[] | select(.key=="AGGREGATE")')
+      if [ -n "$CPCV_ITEM" ]; then
+        CPCV_VALUE=$(echo "$CPCV_ITEM" | jq -r '.latestValue // 0')
+        CPCV_THRESHOLD=$(echo "$CPCV_ITEM" | jq -r '.threshold // 0')
+        CPCV_STATUS=$(echo "$CPCV_ITEM" | jq -r '.thresholdStatus // "UNKNOWN"')
+      else
+        echo -e "\033[31m⚠️ CPCV no encontrado en la respuesta\033[0m"
+        CPCV_VALUE=0
+        CPCV_THRESHOLD=0
+        CPCV_STATUS="UNKNOWN"
+      fi
+
+      # Determinar resultado final
+      if [ "$CPCV_STATUS" = "PASSING" ] || [ "$(awk "BEGIN {print ($CPCV_VALUE >= $CPCV_THRESHOLD)}")" = "1" ]; then
+        COLOR=32
+        MEN="✅ ÉXITO: CPCV ${CPCV_VALUE}% ≥ ${CPCV_THRESHOLD}%"
+        EXIT=0
+      else
+        COLOR=31
+        MEN="❌ FALLO: CPCV ${CPCV_VALUE}% < ${CPCV_THRESHOLD}%"
+        EXIT=1
+      fi
+
+      # Mostrar resultado final
+      echo -e "\n\033[${COLOR}m╔══════════════════════════════════════════════════════╗\033[0m"
+      echo -e "\033[${COLOR}m║ ${MEN} ║\033[0m"
+      echo -e "\033[${COLOR}m╚══════════════════════════════════════════════════════╝\033[0m"
+      exit $EXIT
+    displayName: '📊 Verificación de Cobertura'
+    env:
+      DEEPSOURCE_TOKEN: $(deepsource_token)
+    #continueOnError: false
+
+  - script: |
+      echo -e "\033[36m╔══════════════════════════════════════════════════════╗\033[0m"
+      echo -e "\033[36m║ \033[37m🛡️ OWASP TOP 10 SECURITY SCAN \033[36m║ \033[32mDEEPSOURCE\033[0m"
+      echo -e "\033[36m╚══════════════════════════════════════════════════════╝\033[0m"
+      # Store API response in a variable for parsing
+      REPORT=$(curl -s 'https://api.deepsource.io/graphql/' \
+        -X POST \
+        -H "Authorization: Bearer $(deepsource_token)" \
+        -H "content-type: application/json" \
+        --data '{"query": "{repository(name:\"$(Build.Repository.Name)\", login:\"GrupoNutresa\", vcsProvider:ADS) { name reports { owaspTop10 { key, title, currentValue, status, securityIssueStats { key title occurrence { critical, major, minor, total } } } } } }"}')
+
+      echo -e "\n\033[36m╔══════════════════════════════════════════════════════════════╗\033[0m"
+      echo -e "\033[36m║ \033[37mOWASP TOP 10 SECURITY REPORT \033[36m                       ║\033[0m"
+      echo -e "\033[36m╚══════════════════════════════════════════════════════════════╝\033[0m"
+      REPO_NAME_COLORED="\033[34m$(echo "$REPORT" | jq -r '.data.repository.name // "N/A"')\033[0m"
+      echo -e "📂 Repository: $REPO_NAME_COLORED"
+      
+      # Extract status from the response
+      STATUS=$(echo "$REPORT" | jq -r '.data.repository.reports.owaspTop10.status // "N/A"')
+      if [ "$STATUS" == "PASSING" ]; then
+        echo -e "🔒 \033[32mStatus: PASSING\033[0m"
+      else
+        echo -e "🔓 \033[31mStatus: $STATUS\033[0m"
+      fi
+        
+                    
+      # Extract total vulnerabilities count
+      TOTAL_VULNS=$(echo "$REPORT" | jq -r '.data.repository.reports.owaspTop10.currentValue // 0')
+      echo -e "🔍 \033[33mTotal Vulnerabilities: $TOTAL_VULNS\033[0m"
+      
+      echo -e "\n\033[36m╔══════════════════════════════════════════════════════════════╗\033[0m"
+      echo -e "\033[36m║ \033[37mSECURITY CATEGORIES \033[36m                                 ║\033[0m"
+      echo -e "\033[36m╚══════════════════════════════════════════════════════════════╝\033[0m"
+      echo "$REPORT" | jq -r '.data.repository.reports.owaspTop10.securityIssueStats[] | "\(.key) - \(.title): \(.occurrence.total) (Critical: \(.occurrence.critical), Major: \(.occurrence.major), Minor: \(.occurrence.minor))"' | while read line; do
+        if [[ $line == *"Critical: 0"* && $line == *"Major: 0"* && $line == *"Minor: 0"* ]]; then
+          echo -e "  ✅ \033[32m$line\033[0m"
+        elif [[ $line == *"Critical: 0"* ]]; then
+          echo -e "  ⚠️ \033[33m$line\033[0m"
+        else
+          echo -e "  ☠️ \033[31m$line\033[0m"
+        fi
+      done
+
+      if [ "$TOTAL_VULNS" -eq 0 ]; then
+        echo -e "\n\033[42m\033[30m ✓ NO VULNERABILITIES DETECTED \033[0m\n"
+      else
+        echo -e "\n\033[41m\033[30m ⚠ VULNERABILITIES DETECTED! REVIEW REQUIRED \033[0m\n"
+        echo "##vso[task.setvariable variable=OWASP_FAILED]true"
+        exit 1
+      fi
+    displayName: '🛡️ OWASP Security Audit'
+    continueOnError: true
+
+  # DevSecOps Code Analysis Script con cuadros de colores
+  - script: |
+      echo -e "\033[36m╔══════════════════════════════════════════════════════╗\033[0m"
+      echo -e "\033[36m║ \033[37m🔍 DEVSECOPS CODE ANALYSIS \033[36m║ \033[37m$(date +'%Y-%m-%d %H:%M')\033[0m"
+      echo -e "\033[36m╚══════════════════════════════════════════════════════╝\033[0m"
+
+
+      # Obtener datos de la API
+      # ISSUES_JSON=$(curl -s 'https://api.deepsource.io/graphql/' \
+      #   -X POST \
+      #   -H "Authorization: Bearer $(deepsource_token)" \
+      #   -H "accept: application/json" \
+      #   -H "content-type: application/json" \
+      #   --data '{"query": "query { repository(name:\"$(Build.Repository.Name)\", login:\"GrupoNutresa\", vcsProvider:ADS) { issues { edges { node { issue { shortcode title category severity analyzer { name } shortDescription } occurrences { totalCount } } } } } }"}'  | jq '.data.repository.issues.edges[]'
+
+      ISSUES_JSON=$(curl -s 'https://api.deepsource.io/graphql/' \
+        -X POST \
+        -H "Authorization: Bearer $(deepsource_token)" \
+        -H "accept: application/json" \
+        -H "content-type: application/json" \
+        --data '{"query": "query { repository(name:\"$(Build.Repository.Name)\", login:\"GrupoNutresa\", vcsProvider:ADS) { name, issues { totalCount, edges { node { issue { shortcode, title, category, severity, analyzer { name }, shortDescription }, occurrences { totalCount } } } } } }"}')
+
+      REPO_NAME=$(echo "$ISSUES_JSON" | jq -r '.data.repository.name')
+      TOTAL_ISSUES=$(echo "$ISSUES_JSON" | jq -r '.data.repository.issues.totalCount')
+      TOTAL_OCCURRENCES=$(echo "$ISSUES_JSON" | jq '[.data.repository.issues.edges[].node.occurrences.totalCount] | add // 0')
+
+      echo -e "\n\033[36m╔══════════════════════════════════════════════════════════════╗\033[0m"
+      echo -e "\033[36m║ \033[37mREPOSITORY INFORMATION \033[36m                             ║\033[0m"
+      echo -e "\033[36m╚══════════════════════════════════════════════════════════════╝\033[0m"
+      REPO_NAME_COLORED="\033[34m$REPO_NAME\033[0m"
+      echo -e "📂 Repository: $REPO_NAME_COLORED"
+      echo -e "📊 \033[33mTotal Issues Found: $TOTAL_ISSUES\033[0m"
+      echo -e "📦 \033[35mTotal Occurrences: $TOTAL_OCCURRENCES\033[0m"
+
+      CRITICAL_COUNT=$(echo "$ISSUES_JSON" | jq '[.data.repository.issues.edges[].node.issue | select(.severity == "CRITICAL")] | length')
+      CRITICAL_OCCURRENCES=$(echo "$ISSUES_JSON" | jq '[.data.repository.issues.edges[].node | select(.issue.severity == "CRITICAL").occurrences.totalCount] | add // 0')
+      
+      MAJOR_COUNT=$(echo "$ISSUES_JSON" | jq '[.data.repository.issues.edges[].node.issue | select(.severity == "MAJOR")] | length')
+      MAJOR_OCCURRENCES=$(echo "$ISSUES_JSON" | jq '[.data.repository.issues.edges[].node | select(.issue.severity == "MAJOR").occurrences.totalCount] | add // 0')
+      
+      MINOR_COUNT=$(echo "$ISSUES_JSON" | jq '[.data.repository.issues.edges[].node.issue | select(.severity == "MINOR")] | length')
+      MINOR_OCCURRENCES=$(echo "$ISSUES_JSON" | jq '[.data.repository.issues.edges[].node | select(.issue.severity == "MINOR").occurrences.totalCount] | add // 0')
+
+      echo -e "\n\033[36m╔══════════════════════════════════════════════════════════════╗\033[0m"
+      echo -e "\033[36m║ \033[37mISSUES SUMMARY \033[36m                                     ║\033[0m"
+      echo -e "\033[36m╚══════════════════════════════════════════════════════════════╝\033[0m"
+      echo -e "  ☠️  \033[31mCRITICAL: $CRITICAL_COUNT (Occurrences: $CRITICAL_OCCURRENCES)\033[0m"  # Modificado
+      echo -e "  ⚠️  \033[33mMAJOR: $MAJOR_COUNT (Occurrences: $MAJOR_OCCURRENCES)\033[0m"          # Modificado
+      echo -e "  🔸  \033[34mMINOR: $MINOR_COUNT (Occurrences: $MINOR_OCCURRENCES)\033[0m"          # Modificado
+
+      # Mostrar issues detallados
+      if [ "$TOTAL_ISSUES" -gt 0 ]; then
+        echo -e "\n\033[36m╔══════════════════════════════════════════════════════════════╗\033[0m"
+        echo -e "\033[36m║ \033[37mDETAILED ISSUES \033[36m                                    ║\033[0m"
+        echo -e "\033[36m╚══════════════════════════════════════════════════════════════╝\033[0m"
+        
+        # Procesar cada issue
+        echo "$ISSUES_JSON" | jq -c '.data.repository.issues.edges[].node' | while read -r node; do
+          SEVERITY=$(echo "$node" | jq -r '.issue.severity')
+          CATEGORY=$(echo "$node" | jq -r '.issue.category')
+          SHORTCODE=$(echo "$node" | jq -r '.issue.shortcode')
+          TITLE=$(echo "$node" | jq -r '.issue.title')
+          ANALYZER=$(echo "$node" | jq -r '.issue.analyzer.name')
+          DESCRIPTION=$(echo "$node" | jq -r '.issue.shortDescription')
+          OCCURRENCES=$(echo "$node" | jq -r '.occurrences.totalCount')
+          case $SEVERITY in
+            "CRITICAL")
+              COLOR="\033[31m"
+              SEVERITY_LABEL="☠️  \033[31mCRITICAL\033[0m"
+              ;;
+            "MAJOR")
+              COLOR="\033[33m"
+              SEVERITY_LABEL="⚠️  \033[33mMAJOR\033[0m"
+              ;;
+            *)
+              COLOR="\033[34m"
+              SEVERITY_LABEL="🔸 \033[34mMINOR\033[0m"
+              ;;
+          esac
+
+          echo -e "\n$SEVERITY_LABEL \033[36m[\033[34m$CATEGORY\033[36m]\033[0m"
+          echo -e "🔹 $SHORTCODE: $COLOR$TITLE\033[0m"
+          echo -e "📌 \033[35mOccurrences: $OCCURRENCES\033[0m"
+          echo -e "🔍 \033[36mAnalyzer: $ANALYZER\033[0m"
+          echo -e "📝 \033[37m$DESCRIPTION\033[0m"
+          echo -e "\033[90m────────────────────────────────────────────────────────────\033[0m"
+        done
+      else
+        echo -e "\n\033[42m\033[37m ✅ NO ISSUES FOUND \033[0m"
+      fi
+      # Resumen final mejorado
+      if [ "$CRITICAL_COUNT" -gt 0 ] || [ "$MAJOR_COUNT" -gt 0 ] || [ "$MINOR_COUNT" -gt 0 ]; then
+        # Mostrar Critical si existen
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+          echo -e "\n\033[1;41m\033[1;30m⚠️ ACTION REQUIRED: $CRITICAL_COUNT CRITICAL ISSUES NEED ATTENTION\033[0m"
+          echo "##vso[task.setvariable variable=CODE_ISSUES_FAILED]true"
+        fi
+        
+        # Mostrar Major si existen
+        if [ "$MAJOR_COUNT" -gt 0 ]; then
+          echo -e "\n\033[1;43m\033[1;30m⚠️ WARNING: $MAJOR_COUNT MAJOR ISSUES FOUND\033[0m" 
+          echo "##vso[task.setvariable variable=CODE_ISSUES_FAILED]true"
+        fi
+        
+        # Mostrar Minor si existen
+        if [ "$MINOR_COUNT" -gt 0 ]; then
+          echo -e "\n\033[1;43m\033[1;30m⚠️ NOTICE: $MINOR_COUNT MINOR ISSUES FOUND\033[0m" 
+          echo "##vso[task.setvariable variable=CODE_ISSUES_FAILED]true"
+        fi
+        
+        # Salir con error si hay cualquier tipo de issue
+        exit 1
+        
+      else
+        # Mensaje de éxito solo si no hay ningún issue
+        echo -e "\n\033[1;42m\033[1;30m✅ CODE QUALITY ANALYSIS COMPLETED SUCCESSFULLY\033[0m"
+      fi
+    displayName: '🔍 DevSecOps Issues Report'
+    continueOnError: true
+
+  # DevSecOps Code Analysis Script con cuadros de colores
+  - script: |
+      RESET="\033[0m"
+      FG_BLUE="\033[34m"
+      FG_WHITE="\033[97m"
+      FG_RED="\033[31m"
+      FG_GREEN="\033[32m"
+      BG_GREEN="\033[42m"
+                
+      # Ensure jq is in PATH
+      export PATH=$PATH:/usr/bin
+      
+      echo -e "\033[36m╔══════════════════════════════════════════════════════╗\033[0m"
+      echo -e "\033[36m║ \033[37m🔍 DEVSECOPS CODE ANALYSIS \033[36m║ \033[37m$(date +'%Y-%m-%d %H:%M')\033[0m"
+      echo -e "\033[36m╚══════════════════════════════════════════════════════╝\033[0m"
+
+      ISSUES_JSON=$(curl -s 'https://api.deepsource.io/graphql/' \
+        -X POST \
+        -H "Authorization: Bearer  $(deepsource_token)" \
+        -H 'accept: application/json' \
+        -H 'Content-Type: application/json' \
+        --data '{"query":"query { repository(name:\"$(Build.Repository.Name)\", login:\"GrupoNutresa\", vcsProvider:ADS) { repositoryIssues: issues { totalCount pageInfo { hasNextPage hasPreviousPage startCursor endCursor } edges { cursor node { id issue { shortcode title category severity analyzer { name } shortDescription } occurrences { totalCount pageInfo { hasNextPage hasPreviousPage } edges { cursor node { path beginLine beginColumn endLine endColumn id title issue { shortcode title severity } } } } repository { name defaultBranch } } } } } }"}')
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # 2) Calcular totales
+      CRITICAL_COUNT=$(/usr/bin/jq '[.data.repository.repositoryIssues.edges[].node.issue | select(.severity=="CRITICAL")] | length' <<< "$ISSUES_JSON")
+      CRITICAL_OCC=$(/usr/bin/jq '[.data.repository.repositoryIssues.edges[].node | select(.issue.severity=="CRITICAL").occurrences.totalCount] | add // 0' <<< "$ISSUES_JSON")
+      MAJOR_COUNT=$(/usr/bin/jq '[.data.repository.repositoryIssues.edges[].node.issue | select(.severity=="MAJOR")] | length' <<< "$ISSUES_JSON")
+      MAJOR_OCC=$(/usr/bin/jq '[.data.repository.repositoryIssues.edges[].node | select(.issue.severity=="MAJOR").occurrences.totalCount] | add // 0' <<< "$ISSUES_JSON")
+      MINOR_COUNT=$(/usr/bin/jq '[.data.repository.repositoryIssues.edges[].node.issue | select(.severity=="MINOR")] | length' <<< "$ISSUES_JSON")
+      MINOR_OCC=$(/usr/bin/jq '[.data.repository.repositoryIssues.edges[].node | select(.issue.severity=="MINOR").occurrences.totalCount] | add // 0' <<< "$ISSUES_JSON")
+      TOTAL_ISSUES=$((CRITICAL_COUNT + MAJOR_COUNT + MINOR_COUNT))
+      TOTAL_OCC=$((CRITICAL_OCC + MAJOR_OCC + MINOR_OCC))
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # 3) Mostrar resumen
+      echo -e "\n\033[36m╔══════════════════════════════════════════════════════════════╗\033[0m"
+      echo -e   "\033[36m║ \033[37mREPOSITORY INFORMATION \033[36m                             ║\033[0m"
+      echo -e   "\033[36m╚══════════════════════════════════════════════════════════════╝\033[0m"
+      echo -e   "📂 Repository: \033[34m$(Build.Repository.Name)\033[0m"
+      echo -e   "  ☠️  CRITICAL: $CRITICAL_COUNT (Occurrences: $CRITICAL_OCC)"
+      echo -e   "  ⚠️  MAJOR:    $MAJOR_COUNT (Occurrences: $MAJOR_OCC)"
+      echo -e   "  🔸  MINOR:    $MINOR_COUNT (Occurrences: $MINOR_OCC)"
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # 4) Detallar issues
+      if [ "$TOTAL_ISSUES" -gt 0 ]; then
+        echo -e "\n\033[36m╔══════════════════════════════════════════════════════════════╗\033[0m"
+        echo -e   "\033[36m║ \033[37mDETAILED ISSUES \033[36m                                    ║\033[0m"
+        echo -e   "\033[36m╚══════════════════════════════════════════════════════════════╝\033[0m"
+
+        /usr/bin/jq -c '.data.repository.repositoryIssues.edges[].node' <<< "$ISSUES_JSON" \
+          | while IFS= read -r node; do
+              SEV=$(/usr/bin/jq -r '.issue.severity' <<< "$node")
+              CAT=$(/usr/bin/jq -r '.issue.category' <<< "$node")
+              CODE=$(/usr/bin/jq -r '.issue.shortcode' <<< "$node")
+              TITLE=$(/usr/bin/jq -r '.issue.title' <<< "$node")
+              DESC=$(/usr/bin/jq -r '.issue.shortDescription' <<< "$node")
+              ANALYZER=$(/usr/bin/jq -r '.issue.analyzer.name' <<< "$node")
+              OCC_COUNT=$(/usr/bin/jq -r '.occurrences.totalCount' <<< "$node")
+
+              case $SEV in
+                CRITICAL) ICON="☠️"; SEV_COLOR="\033[31m";;
+                MAJOR)    ICON="⚠️"; SEV_COLOR="\033[33m";;
+                *)        ICON="🔸"; SEV_COLOR="\033[34m";;
+              esac
+
+              echo -e "\n$ICON ${SEV_COLOR}$SEV\033[0m [\033[34m$CAT\033[0m]"
+              echo -e "🔹 $CODE: $TITLE"
+              echo -e "🔍 Analyzer: $ANALYZER"
+              echo -e "📝 $DESC"
+              echo -e "📌 Total Occurrences: $OCC_COUNT"
+
+              # Iterar cada ocurrencia sin splitting problemático
+              /usr/bin/jq -c '.occurrences.edges[].node' <<< "$node" \
+              | while IFS= read -r occ; do
+                  PATH=$(/usr/bin/jq -r '.path' <<< "$occ")
+                  BL=$(/usr/bin/jq -r '.beginLine' <<< "$occ"):$(/usr/bin/jq -r '.beginColumn' <<< "$occ")
+                  EL=$(/usr/bin/jq -r '.endLine' <<< "$occ"):$(/usr/bin/jq -r '.endColumn' <<< "$occ")
+                  OID=$(/usr/bin/jq -r '.id' <<< "$occ")
+                  OT=$(/usr/bin/jq -r '.title' <<< "$occ")
+
+                  echo -e "\033[31m   • File:\033[0m $PATH \033[90m[$BL-$EL]\033[0m"
+                  echo -e "     – Occurrence ID: $OID"
+                  echo -e "     – Title: \033[33m$OT\033[0m"
+                done
+
+              echo -e "\033[90m────────────────────────────────────────────────────────────\033[0m"
+            done
+
+        # 5) Cuadro final con fondo rojo y texto azul
+        echo -e "${FG_RED}┌──────────────────────────────────────────────────────────────────────────┐${RESET}"
+        echo -e "${FG_RED}│${RESET} ${FG_BLUE}Se debe solucionar lo siguiente: ISSUES = ${TOTAL_ISSUES} y Occurrences = ${TOTAL_OCC}${RESET} ${FG_RED}│${RESET}"
+        echo -e "${FG_RED}│${RESET} ${FG_WHITE}Para más información: https://app.deepsource.com/ads/GrupoNutresa/${BUILD_REPOSITORY_NAME}${RESET} ${FG_RED}│${RESET}"
+        echo -e "${FG_RED}└──────────────────────────────────────────────────────────────────────────┘${RESET}"
+
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+          echo -e "\n\033[1;41m\033[1;30m⚠️ ACTION REQUIRED: $CRITICAL_COUNT CRITICAL ISSUES NEED ATTENTION\033[0m"
+          exit 1
+        elif [ "$MAJOR_COUNT" -gt 0 ]; then
+          echo -e "\n\033[1;43m\033[1;30m⚠️ WARNING: $MAJOR_COUNT MAJOR ISSUES FOUND\033[0m"
+          exit 1
+        elif [ "$MINOR_COUNT" -gt 0 ]; then
+          echo -e "\n\033[1;44m\033[1;30m⚠️ NOTICE: $MINOR_COUNT MINOR ISSUES FOUND\033[0m"
+          exit 1
+        fi
+
+      else
+        echo -e "${FG_GREEN}┌──────────────────────────────────────────────────────────────────────────┐${RESET}"
+        echo -e "${FG_GREEN}│${RESET} ${FG_WHITE}✅ Paso todo correcto!${RESET} ${FG_GREEN}                                                   │${RESET}"
+        echo -e "${FG_GREEN}└──────────────────────────────────────────────────────────────────────────┘${RESET}"
+      fi
+    displayName: '🔍 DETAILED DevSecOps Issues Report'
+    continueOnError: false
+
+
+  - script: | 
+        echo -e "\033[1;36m╔══════════════════════════════════════════════════════════════╗\033[0m"
+        echo -e "\033[1;36m║ \033[1;37m🚥 DEEPSOURCE QUALITY GATE - STATUS CHECK \033[1;36m                   ║\033[0m"
+        echo -e "\033[1;36m╚══════════════════════════════════════════════════════════════╝\033[0m"
+
+        BACKOFF=1
+        MAX_WAIT=300
+        START_TIME=$(date +%s)
+        REPO_URL="https://app.deepsource.com/ads/GrupoNutresa/$(Build.Repository.Name)"
+        ERROR_TYPE="UNKNOWN"
+
+        if [ "$OWASP_FAILED" == "true" ]; then
+          ERROR_TYPE="OWASP"
+        elif [ "$CODE_ISSUES_FAILED" == "true" ]; then
+          ERROR_TYPE="CODE"
+        fi
+
+        STATUS_PROJECT=`curl 'https://api.deepsource.io/graphql/' \
+        -X POST \
+        -H 'Authorization: Bearer $(DEEPSOURCE_TOKEN)' \
+        -H 'accept: application/json' \
+        -H 'content-type: application/json' \
+        --data 	'{"query": "query { repository(name:\"$(Build.Repository.Name)\", login:\"GrupoNutresa\", vcsProvider:ADS) { id, name, defaultBranch, isPrivate, vcsUrl, latestCommitOid ,analysisRuns(last:1) { edges { node { runUid, status, summary{ occurrencesIntroduced, occurrencesResolved, occurrencesSuppressed} } } } } }"}' | jq '.data.repository.analysisRuns.edges[0].node.status'`
+
+
+        get_status() {
+          curl 'https://api.deepsource.io/graphql/' \
+          -X POST \
+          -H "Authorization: Bearer $(DEEPSOURCE_TOKEN)" \
+          -H 'accept: application/json' \
+          -H 'content-type: application/json' \
+          --data-raw '{
+            "query": "query { repository(name: \"$(Build.Repository.Name)\", login: \"GrupoNutresa\", vcsProvider: ADS) { analysisRuns { edges { node { runUid createdAt status summary { occurrencesIntroduced occurrencesResolved occurrencesSuppressed } } } } } }"
+          }' | jq '
+              .data.repository.analysisRuns.edges
+              | map(.node)
+              | sort_by(.createdAt)
+              | reverse
+              | .[0]'
+              
+        }
+
+        STATUS=$(get_status | jq -r '.status')
+        echo "imprimiendo status: $STATUS"
+        while [ "$STATUS" == "PENDING" ]; do
+          ELAPSED_TIME=$(( $(date +%s) - START_TIME ))
+          
+          if [ $ELAPSED_TIME -ge $MAX_WAIT ]; then
+            echo -e "\033[1;31m╔══════════════════════════════════════════════════════════════╗\033[0m"
+            echo -e "\033[1;31m║\033[1;37m                ⌛ TIMEOUT - MAX WAIT EXCEEDED ⌛             \033[1;31m║\033[0m"
+            echo -e "\033[1;31m╚══════════════════════════════════════════════════════════════╝\033[0m"
+            exit 1
+          fi
+
+          echo -e "\n\033[1;33m╔══════════════════════════════════════════════════════════════╗\033[0m"
+          echo -e "\033[1;33m║\033[1;37m 🔄 ANALYSIS IN PROGRESS - WAITING ${BACKOFF}s               \033[1;33m║\033[0m"
+          echo -e "\033[1;33m╚══════════════════════════════════════════════════════════════╝\033[0m"
+          
+          sleep $BACKOFF
+          STATUS=$(get_status | jq -r '.status')
+          BACKOFF=$(( (BACKOFF*2) + (1 + RANDOM % 5) ))
+          [ $BACKOFF -gt 30 ] && BACKOFF=30
+        done
+
+        # Resultado Final
+        if [ "$STATUS" != "SUCCESS" ]; then
+          echo -e "\033[1;31m╔══════════════════════════════════════════════════════════════╗\033[0m"
+          echo -e "\033[1;31m║\033[1;37m                    🚨 DEPLOYMENT BLOCKED 🚨                  \033[1;31m║\033[0m"
+          echo -e "\033[1;31m╠══════════════════════════════════════════════════════════════╣\033[0m"
+          
+          case $ERROR_TYPE in
+            "OWASP")
+              echo -e "\033[1;31m║\033[1;37m ☠️  OWASP Security Issues Detected                          \033[1;31m║\033[0m"
+              echo -e "\033[1;31m║\033[1;37m ➤ Critical Vulnerabilities Found                          \033[1;31m║\033[0m"
+              ;;
+            "CODE")
+              echo -e "\033[1;31m║\033[1;37m ⚠️  Critical Code Quality Issues                            \033[1;31m║\033[0m"
+              echo -e "\033[1;31m║\033[1;37m ➤  DeepSource Status = $STATUS_PROJECT                             \033[1;31m║\033[0m"
+              echo -e "\033[1;31m║\033[1;37m ➤ Review DevSecOps Findings                                 \033[1;31m║\033[0m"
+              ;;
+            *)
+              echo -e "\033[1;31m║\033[1;37m 🔍 Unknown Quality Gate Failure - Status = $STATUS_PROJECT                          \033[1;31m║\033[0m"
+              ;;
+          esac
+          
+          echo -e "\033[1;31m╠══════════════════════════════════════════════════════════════╣\033[0m"
+          echo -e "\033[1;31m║\033[1;37m 🌐 Review Details                        \033[1;31m║\033[0m"
+            echo -e "\033[1;31m║\033[1;37m 🌐$REPO_URL            \033[1;31m║\033[0m"
+          echo -e "\033[1;31m╚══════════════════════════════════════════════════════════════╝\033[0m"
+          echo -e "\033[1;31m╔══════════════════════════════════════════════════════════════════════╗\033[0m"
+          echo -e "\033[1;31m║                                                                      ║\033[0m"
+          echo -e "\033[1;31m║ \033[1;31m _   _  ___ _____      _    ____  ____  ____   _____     _____ ____  \033[1;31m ║\033[0m"
+          echo -e "\033[1;31m║ \033[1;31m| \ | |/ _ \_   _|    / \  |  _ \|  _ \|  _ \ / _ \ \   / / ____|  _ \ \033[1;31m ║\033[0m"
+          echo -e "\033[1;31m║ \033[1;31m|  \| | | | || |     / _ \ | |_) | |_) | |_) | | | \ \ / /|  _| | | | |\033[1;31m ║\033[0m"
+          echo -e "\033[1;31m║ \033[1;31m| |\  | |_| || |    / ___ \|  __/|  __/|  _ <| |_| |\ V / | |___| |_| |\033[1;31m ║\033[0m"
+          echo -e "\033[1;31m║ \033[1;31m|_| \_|\___/ |_|   /_/   \_\_|   |_|   |_| \_\\___/  \_/  |_____|____/ \033[1;31m ║\033[0m"
+          echo -e "\033[1;31m║                                                                      ║\033[0m"
+          echo -e "\033[1;31m╚══════════════════════════════════════════════════════════════════════╝\033[0m"
+          exit 1
+        else
+          echo -e "\033[1;32m╔══════════════════════════════════════════════════════════════╗\033[0m"
+          echo -e "\033[1;32m║\033[1;37m                     🎉 QUALITY GATE PASSED 🎉              \033[1;32m║\033[0m"
+          echo -e "\033[1;32m╚══════════════════════════════════════════════════════════════╝\033[0m"
+          echo -e "\033[1;32m╔══════════════════════════════════════════════════════════════════════╗\033[0m"
+          echo -e "\033[1;32m║                                                                      ║\033[0m"
+          echo -e "\033[1;32m║ \033[1;32m    _    ____  ____  ____   _____     _____ ____  \033[1;32m         ║\033[0m"
+          echo -e "\033[1;32m║ \033[1;32m   / \  |  _ \|  _ \|  _ \ / _ \ \   / / ____|  _ \ \033[1;32m        ║\033[0m"
+          echo -e "\033[1;32m║ \033[1;32m  / _ \ | |_) | |_) | |_) | | | \ \ / /|  _| | | | |\033[1;32m        ║\033[0m"
+          echo -e "\033[1;32m║ \033[1;32m / ___ \|  __/|  __/|  _ <| |_| |\ V / | |___| |_| |\033[1;32m        ║\033[0m"
+          echo -e "\033[1;32m║ \033[1;32m/_/   \_\_|   |_|   |_| \_\\___/  \_/  |_____|____/ \033[1;32m        ║\033[0m"
+          echo -e "\033[1;32m║                                                                      ║\033[0m"
+          echo -e "\033[1;32m╚══════════════════════════════════════════════════════════════════════╝\033[0m"
+        fi
+    displayName: '🚦 Quality Gate Check'
+    continueOnError: true
+    env:
+      OWASP_FAILED: $(OWASP_FAILED)
+      CODE_ISSUES_FAILED: $(CODE_ISSUES_FAILED)

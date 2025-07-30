@@ -1,0 +1,639 @@
+parameters:
+  - name: applicationName
+    type: string
+  - name: lambdaStopB
+    type: string
+  - name: lambdaDeployB
+    type: string    
+  - name: awsAccountEnvironment
+    type: string
+  - name: previousJob
+    type: string
+    default: "Build"
+  - name: replaceToRoot
+    type: string
+    default: "true"
+  - name: availabilityZones
+    type: object
+    default:
+    - a
+  - name: repositoryName
+    type: string
+  - name: awsCredentials
+    type: string
+  - name: ecsClusterName
+    type: string
+  - name: ecsServiceName
+    type: string
+  - name: dockerArgumentsString
+    type: string
+    default: ''
+  - name: containerImage
+    type: string
+    default: 'gradle:7-jdk17'
+  - name: gradletask
+    type: string
+    default: 'war'
+  - name: buildPath
+    type: string
+  - name: tecnologia
+    type: string
+  - name: previousStage
+    type: string
+  - name: pais
+    type: string
+  - name: awsCredentialsCloudfront
+    type: string
+  - name: bucketName
+    type: string
+  - name: cloudfrontDistributionId
+    type: string
+  - name: projectName
+    type: string
+  - name: environment
+    type: string
+  - name: sourceFolder
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/dist/'
+  - name: workingDirectory
+    type: string
+    default: '$(System.DefaultWorkingDirectory)'
+  - name: npmCommandToRun
+    type: string
+    default: 'run build'
+  - name: versionNode
+    type: string
+    default: '14.x'
+  - name: dockerfileName
+    type: string
+    default: 'Dockerfile'
+  - name: customBuildFolder
+    type: string
+  - name: npmauth
+    type: boolean
+    default: true
+  - name: s3artifactfolder
+    type: string
+  - name: s3BucketArtifact
+    type: string
+  - name: ambiente
+    type: string
+    default: 'qa'
+  - name: replaceTokens
+    type: boolean
+    default: false
+  - name: replaceTokenTarget
+    type: string
+    default: ''
+
+stages:
+  - stage: 'Deploy'
+    condition: and(not(or(failed(), canceled())), not(eq(variables['Build.Reason'], 'PullRequest')), or(contains(variables['Build.SourceBranch'], 'dev'), contains(variables['Build.SourceBranch'], 'qa'), contains(variables['Build.SourceBranch'], 'master'), contains(variables['Build.SourceBranch'], 'feature'), contains(variables['Build.SourceBranch'], 'hotfix'), contains(variables['Build.SourceBranch'], 'release')))
+    displayName: 'Deploy'
+    dependsOn: ${{ parameters.previousStage }}
+    # pool:
+    #   name: NovaventaTest
+    jobs:
+      ##TECNOLOGIA EC2 MEXICO##
+      - ${{if and(eq(parameters.tecnologia, 'ec2'),eq(parameters.pais, 'mx'))}}:
+          - deployment: Deploy
+            environment: ${{ parameters.awsAccountEnvironment }}-${{ parameters.applicationName }}
+            cancelTimeoutInMinutes: 0
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                  #   # This task has such script because we need to check if we want to copy the war as ROOT.
+                  #   # If so, it will copy it as ROOT and delete the previous ROOT folder created.
+                  #   # If doesn't, it will need to get the .war file name (without the full path or the .war extension) and then copy it to the corresponding path and delete the corresponding previous folder.
+                  #   # "sudo" prefix is needed in order to make changes directly to protected folders, need to check in a near future if this can be replaced with plain commands, without invoking sudo.\
+                  # - ${{if ne(length(join('', parameters.availabilityZones)), 1)}}:
+                  #   - ${{each zone in parameters.availabilityZones}}:
+                  #     - task: SSH@0
+                  #       inputs:
+                  #         sshEndpoint: 'sc-${{parameters.awsAccountEnvironment}}-ssh-${{parameters.applicationName}}-${{zone}}'
+                  #         runOptions: 'inline'
+                  #         inline: |
+                  #           for file in ./cicd/*.war; do
+                  #             if [[ '${{ parameters.replaceToRoot }}' == 'true' ]]; then
+                  #               sudo systemctl stop tomcat.service
+                  #               cp $file /usr/share/tomcat/webapps/ROOT.war
+                  #               sudo rm -rf /usr/share/tomcat/webapps/ROOT
+                  #               sudo systemctl start tomcat.service
+                  #             else
+                  #               sudo systemctl stop tomcat.service
+                  #               filePathSplitted=(${file//// })
+                  #               fileName=${filePathSplitted[-1]}
+                  #               warName=${fileName::-4}
+                  #               cp $file "/usr/share/tomcat/webapps/"$warName".war"
+                  #               sudo rm -rf "/usr/share/tomcat/webapps/"$warName
+                  #               sudo systemctl start tomcat.service
+                  #             fi
+                  #           done
+                  #         readyTimeout: '20000'
+                  #       displayName: Updating .war file to tomcat folder (${{zone}})
+                  # - ${{else}}:
+                  - task: SSH@0
+                    inputs:
+                      sshEndpoint: 'sc-${{parameters.awsAccountEnvironment}}-ssh-${{parameters.applicationName}}'
+                      runOptions: 'inline'
+                      inline: |
+                        for file in ./cicd/*.war; do
+                          if [[ '${{ parameters.replaceToRoot }}' == 'true' ]]; then
+                            sudo systemctl stop tomcat.service
+                            sudo cp $file /usr/share/tomcat/webapps/ROOT.war
+                            sudo rm -rf /usr/share/tomcat/webapps/ROOT
+                            sudo systemctl start tomcat.service
+                          else
+                            sudo systemctl stop tomcat.service
+                            filePathSplitted=(${file//// })
+                            fileName=${filePathSplitted[-1]}
+                            warName=${fileName::-4}
+                            sudo cp $file "/usr/share/tomcat/webapps/"$warName".war"
+                            sudo rm -rf "/usr/share/tomcat/webapps/"$warName
+                            sudo systemctl start tomcat.service
+                          fi
+                        done
+                      readyTimeout: '20000'
+                    displayName: Updating .war file to tomcat folder
+      
+
+
+##TECNOLOGIA ECS MEXICO##
+      - ${{if and(eq(parameters.tecnologia, 'ecs'),eq(parameters.pais, 'mx'))}}:
+          - job: Build
+            #pool: Novaventa2
+            variables:
+              GRADLE_USER_HOME: $(Pipeline.Workspace)/.gradle
+            container: 
+              image: ${{parameters.containerImage}}
+              volumes:
+                - gradle:/root/.gradle
+            workspace:
+              clean: all
+            steps:
+            - task: NodeAndNpmTool@1
+              inputs:
+                versionSpec: '14.x'
+              displayName: Install node
+
+            # - task: Cache@2
+            #   inputs:
+            #     key: 'gradle | "$(Agent.OS)"' # Swap build.gradle.kts for build.gradle when using Groovy
+            #     restoreKeys: |
+            #       gradle | "$(Agent.OS)"
+            #       gradle
+            #     path: $(GRADLE_USER_HOME)
+            #   displayName: Configure gradle caching
+            - task: MavenAuthenticate@0
+              displayName: 'Maven Authenticate'
+              inputs:
+                artifactsFeeds: Novaventa
+            - ${{ if eq(parameters.npmauth, 'true') }}:
+              - task: npmAuthenticate@0
+                displayName: 'npm Authenticate'
+                inputs:
+                  workingFile: '${{parameters.customBuildFolder}}/.npmrc'
+                
+            - task: Gradle@3
+              inputs:
+                gradleWrapperFile: 'gradlew'
+                workingDirectory: ${{ parameters.workingDirectory }}
+                tasks: ${{ parameters.gradletask }}
+                publishJUnitResults: false
+                javaHomeOption: 'JDKVersion'
+                sonarQubeRunAnalysis: false
+                spotBugsAnalysis: false
+                # options: '--build-cache'
+              displayName: Build project
+
+            # - script: |   
+            #     # stop the Gradle daemon to ensure no files are left open (impacting the save cache operation later)
+            #     ./gradlew --stop    
+            #   displayName: Build
+
+            # - task: DockerInstaller@0
+            #   inputs:
+            #    dockerVersion: '17.09.0-ce'
+            #    displayName: Docker Install
+            # - task: CopyFiles@2
+            #   inputs:
+            #     contents: './build/libs/**'
+            #     targetFolder: $(Build.ArtifactStagingDirectory)
+
+            - publish: '${{ parameters.buildPath }}'
+              artifact: Build
+
+          - job: PushImageReloadECSService
+            dependsOn: Build
+            #pool: Novaventa2
+            workspace:
+              clean: all
+            steps:
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                source: current
+                artifact: Build
+                path: '${{ parameters.buildPath }}'
+
+            - task: Docker@2
+              displayName: Build docker image
+              inputs:
+                repository: ${{ parameters.repositoryName }}
+                command: 'build'
+                Dockerfile: ${{ parameters.dockerfileName }}
+                tags: |
+                  $(Build.BuildNumber)
+                  latest
+                arguments: '${{ parameters.dockerArgumentsString }}'
+
+            - task: ECRPushImage@1
+              inputs:
+                awsCredentials: ${{ parameters.awsCredentials }}
+                regionName: 'us-east-1'
+                imageSource: 'imagename'
+                sourceImageName: ${{ parameters.repositoryName }}
+                repositoryName: ${{ parameters.repositoryName }}
+                pushTag: '$(Build.BuildNumber)'
+              displayName: Upload image to ECR ($(Build.BuildNumber))
+
+            - task: ECRPushImage@1
+              inputs:
+                awsCredentials: ${{ parameters.awsCredentials }}
+                regionName: 'us-east-1'
+                imageSource: 'imagename'
+                sourceImageName: ${{ parameters.repositoryName }}
+                repositoryName: ${{ parameters.repositoryName }}
+                pushTag: 'latest'
+              displayName: Upload image to ECR
+
+            - task: AWSCLI@1
+              displayName: Reload ECS service
+              inputs:
+                awsCredentials: ${{ parameters.awsCredentials }}
+                regionName: 'us-east-1'
+                awsCommand: 'ecs'
+                awsSubCommand: 'update-service'
+                awsArguments: '--cluster ${{ parameters.ecsClusterName }} --service ${{ parameters.ecsServiceName }} --force-new-deployment'
+
+##TECNOLOGIA ECS COLOMBIA ##
+      - ${{if and(eq(parameters.tecnologia, 'ecs'),eq(parameters.pais, 'co'))}}:
+          - job: Build
+            variables:
+              GRADLE_USER_HOME: $(Pipeline.Workspace)/.gradle
+            container: 
+              image: ${{parameters.containerImage}}
+              volumes:
+                - gradle:/root/.gradle
+            workspace:
+              clean: all
+            steps:
+            - task: NodeAndNpmTool@1
+              inputs:
+                versionSpec: '10.x'
+              displayName: Install node
+
+            # - task: Cache@2
+            #   inputs:
+            #     key: 'gradle | "$(Agent.OS)"' # Swap build.gradle.kts for build.gradle when using Groovy
+            #     restoreKeys: |
+            #       gradle | "$(Agent.OS)"
+            #       gradle
+            #     path: $(GRADLE_USER_HOME)
+            #   displayName: Configure gradle caching
+            - task: MavenAuthenticate@0
+              displayName: 'Maven Authenticate'
+              inputs:
+                artifactsFeeds: Novaventa
+            - ${{ if eq(parameters.npmauth, 'true') }}:
+              - task: npmAuthenticate@0
+                displayName: 'npm Authenticate'
+                inputs:
+                  workingFile: '${{parameters.customBuildFolder}}/.npmrc'
+            - ${{ if eq(parameters.replaceTokens, 'true') }}: 
+              - task: DownloadSecureFile@1
+                inputs:
+                  secureFile: '${{parameters.applicationName}}-${{parameters.environment}}-sf.json'
+                displayName: 'dowloading ${{parameters.applicationName}}-${{parameters.environment}}-sf.json' 
+              - task: CopyFiles@2
+                displayName: 'Copy Files to: $(System.DefaultWorkingDirectory)'
+                inputs:
+                  SourceFolder: '$(Agent.TempDirectory)'
+                  Contents: '${{parameters.applicationName}}-${{parameters.environment}}-sf.json'
+                  TargetFolder: '$(System.DefaultWorkingDirectory)'
+              
+              - task: replacetokens@6
+                displayName: 'Set files'
+                inputs:
+                  sources: ${{parameters.replaceTokenTarget}}
+                  encoding: 'auto'
+                  tokenPattern: 'default'
+                  addBOM: true
+                  missingVarLog: 'warn'
+                  missingVarAction: keep
+                  ifNoFilesFound: 'warn'
+                  additionalVariables: '@**/*.json'
+                  transforms: false
+                  recursive: false
+                  telemetryOptout: true
+            - task: Gradle@3
+              inputs:
+                gradleWrapperFile: 'gradlew'
+                workingDirectory: ${{ parameters.workingDirectory }}
+                tasks: ${{ parameters.gradletask }}
+                publishJUnitResults: false
+                javaHomeOption: 'JDKVersion'
+                sonarQubeRunAnalysis: false
+                spotBugsAnalysis: false
+                # options: '--build-cache'
+              displayName: Build project
+
+            # - script: |   
+            #     # stop the Gradle daemon to ensure no files are left open (impacting the save cache operation later)
+            #     ./gradlew --stop    
+            #   displayName: Build
+
+            # - task: DockerInstaller@0
+            #   inputs:
+            #    dockerVersion: '17.09.0-ce'
+            #    displayName: Docker Install
+            # - task: CopyFiles@2
+            #   inputs:
+            #     contents: './build/libs/**'
+            #     targetFolder: $(Build.ArtifactStagingDirectory)
+
+            - publish: '${{ parameters.buildPath }}'
+              artifact: Build
+
+          - job: PushImageReloadECSService
+            dependsOn: Build
+            workspace:
+              clean: all
+            steps:
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                source: current
+                artifact: Build
+                path: '${{ parameters.buildPath }}'
+
+            - task: Docker@2
+              displayName: Build docker image
+              inputs:
+                repository: ${{ parameters.repositoryName }}
+                command: 'build'
+                Dockerfile: ${{ parameters.dockerfileName }}
+                tags: |
+                  $(Build.BuildNumber)
+                  latest
+                arguments: '${{ parameters.dockerArgumentsString }}'
+
+            - task: ECRPushImage@1
+              inputs:
+                awsCredentials: ${{ parameters.awsCredentials }}
+                regionName: 'us-east-1'
+                imageSource: 'imagename'
+                sourceImageName: ${{ parameters.repositoryName }}
+                repositoryName: ${{ parameters.repositoryName }}
+                pushTag: '$(Build.BuildNumber)'
+              displayName: Upload image to ECR ($(Build.BuildNumber))
+              
+            - task: ECRPushImage@1
+              inputs:
+                awsCredentials: ${{ parameters.awsCredentials }}
+                regionName: 'us-east-1'
+                imageSource: 'imagename'
+                sourceImageName: ${{ parameters.repositoryName }}
+                repositoryName: ${{ parameters.repositoryName }}
+                pushTag: 'latest'
+              displayName: Upload image to ECR
+
+            - task: AWSCLI@1
+              displayName: Reload ECS service
+              inputs:
+                awsCredentials: ${{ parameters.awsCredentials }}
+                regionName: 'us-east-1'
+                awsCommand: 'ecs'
+                awsSubCommand: 'update-service'
+                awsArguments: '--cluster ${{ parameters.ecsClusterName }} --service ${{ parameters.ecsServiceName }} --force-new-deployment'
+
+##TECNOLOGIA ec2 COLOMBIA
+      - ${{if and(eq(parameters.tecnologia, 'ec2'),eq(parameters.pais, 'co'))}}:
+          - deployment: DeployCO
+            environment: ${{ parameters.awsAccountEnvironment }}-${{ parameters.applicationName }}
+            condition: succeeded()
+            cancelTimeoutInMinutes: 0
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    # # This task has such script because we need to check if we want to copy the war as ROOT.
+                    # # If so, it will copy it as ROOT and delete the previous ROOT folder created.
+                    # # If doesn't, it will need to get the .war file name (without the full path or the .war extension) and then copy it to the corresponding path and delete the corresponding previous folder.
+                    # # "sudo" prefix is needed in order to make changes directly to protected folders, need to check in a near future if this can be replaced with plain commands, without invoking sudo.\
+                    # - ${{if ne(length(join('', parameters.availabilityZones)), 1)}}:
+                    #   - ${{each zone in parameters.availabilityZones}}:
+                    #     - task: SSH@0
+                    #       inputs:
+                    #         sshEndpoint: 'sc-${{parameters.awsAccountEnvironment}}-ssh-${{parameters.applicationName}}-${{zone}}'
+                    #         runOptions: 'inline'
+                    #         inline: |
+                    #           for file in ./cicd/*.war; do
+                    #             if [[ '${{ parameters.replaceToRoot }}' == 'true' ]]; then
+                    #               sudo systemctl stop tomcat.service
+                    #               cp $file /var/lib/tomcat/webapps/ROOT.war
+                    #               sudo rm -rf /var/lib/tomcat/webapps/ROOT
+                    #               sudo systemctl start tomcat.service
+                    #             else
+                    #               sudo systemctl stop tomcat.service
+                    #               filePathSplitted=(${file//// })
+                    #               fileName=${filePathSplitted[-1]}
+                    #               warName=${fileName::-4}
+                    #               cp $file "/var/lib/tomcat/webapps/"$warName".war"
+                    #               sudo rm -rf "/var/lib/tomcat/webapps/"$warName
+                    #               sudo systemctl start tomcat.service
+                    #             fi
+                    #           done
+                    #         readyTimeout: '20000'
+                    #       displayName: Updating .war file to tomcat folder (${{zone}})
+                    # - ${{else}}:
+                      - task: SSH@0
+                        inputs:
+                          sshEndpoint: 'sc-${{parameters.awsAccountEnvironment}}-ssh-${{parameters.applicationName}}-${{parameters.environment}}'
+                          runOptions: 'inline'
+                          inline: |
+                            for file in ./cicd/*.war; do
+                              if [[ '${{ parameters.replaceToRoot }}' == 'true' ]]; then
+                                sudo systemctl stop tomcat.service
+                                sudo cp $file /usr/share/tomcat/webapps/ROOT.war
+                                sudo rm -rf /usr/share/tomcat/webapps/ROOT
+                                sudo systemctl start tomcat.service
+                              else
+                                sudo systemctl stop tomcat.service
+                                filePathSplitted=(${file//// })
+                                fileName=${filePathSplitted[-1]}
+                                warName=${fileName::-4}
+                                sudo cp $file "/usr/share/tomcat/webapps/"$warName".war"
+                                sudo rm -rf "/usr/share/tomcat/webapps/"$warName
+                                sudo systemctl start tomcat.service
+                              fi
+                            done
+                          readyTimeout: '20000'
+                        displayName: Updating .war file to tomcat folder
+      
+##TECNOLOGIA ec2 mexico Condicion SVN      
+      - ${{if and(eq(parameters.tecnologia, 'ec2_svn'),eq(parameters.pais, 'mx'))}}:
+          # - deployment: Stop_Tomcat
+          #   environment: ${{ parameters.awsAccountEnvironment }}-${{ parameters.applicationName }}
+          #   condition: contains(variables['Build.SourceBranch'], 'mastermex')
+          #   cancelTimeoutInMinutes: 0
+          #   strategy:
+          #     runOnce:
+          #       deploy:
+          #         steps:
+          #         - bash: |
+          #             apiStatus="$(curl -s -o /dev/null -w "%{http_code}" --request GET '${{ parameters.lambdaStopB }}')"
+          #             echo $apiStatus
+          #             echo "##vso[task.setvariable variable=tomcatStatus;isoutput=true]$apiStatus"
+
+          - deployment: Deploy
+            # dependsOn: Stop_Tomcat
+            variables: 
+              getStatus: $[ dependencies.Stop_Tomcat.outputs['get200.tomcatStatus'] ]
+            environment: ${{ parameters.awsAccountEnvironment }}-${{ parameters.applicationName }}
+            # condition: eq(variables.getStatus, '200')
+            cancelTimeoutInMinutes: 0
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    # This task has such script because we need to check if we want to copy the war as ROOT.
+                    # If so, it will copy it as ROOT and delete the previous ROOT folder created.
+                    # If doesn't, it will need to get the .war file name (without the full path or the .war extension) and then copy it to the corresponding path and delete the corresponding previous folder.
+                    # "sudo" prefix is needed in order to make changes directly to protected folders, need to check in a near future if this can be replaced with plain commands, without invoking sudo.\
+                      - task: SSH@0
+                        inputs:
+                          sshEndpoint: 'sc-${{parameters.awsAccountEnvironment}}-ssh-${{parameters.applicationName}}'
+                          runOptions: 'inline'
+                          inline: |
+                            for file in ./cicd/*.war; do
+                              if [[ '${{ parameters.replaceToRoot }}' == 'true' ]]; then
+                                sudo systemctl stop tomcat.service
+                                sudo cp $file /usr/share/tomcat/webapps/ROOT.war
+                                sudo rm -rf /usr/share/tomcat/webapps/ROOT
+                                sudo systemctl start tomcat.service
+                              else
+                                sudo systemctl stop tomcat.service
+                                filePathSplitted=(${file//// })
+                                fileName=${filePathSplitted[-1]}
+                                warName=${fileName::-4}
+                                sudo cp $file "/usr/share/tomcat/webapps/"$warName".war"
+                                sudo rm -rf "/usr/share/tomcat/webapps/"$warName
+                                sudo systemctl start tomcat.service
+                              fi
+                            done
+                          readyTimeout: '20000'
+                        displayName: Updating .war file to tomcat folder
+          
+          # - deployment: DeployOnBinstance
+          #   dependsOn: Deploy
+          #   environment: ${{ parameters.awsAccountEnvironment }}-${{ parameters.applicationName }}
+          #   condition: contains(variables['Build.SourceBranch'], 'mastermex')
+          #   cancelTimeoutInMinutes: 0
+          #   strategy:
+          #     runOnce:
+          #       deploy:
+          #         steps:
+          #         - script: |
+          #             curl -s -o /dev/null -w "%{http_code}" --request GET '${{ parameters.lambdaDeployB }}'
+
+##TECNOLOGIA S3 Node 18       
+      - ${{if and(eq(parameters.tecnologia, 's3'),eq(parameters.pais, 'co'),contains(parameters.versionNode, '18.10.0'))}}:
+          - deployment: DeployS3
+            container: ${{parameters.containerImage}}
+            displayName: Deploy to S3
+            environment: ${{ parameters.projectName }}-${{ parameters.environment }}
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    - checkout: self
+                    
+                    - template: /dependencies/npm-dependencies.yml@templates
+                      parameters:
+                        versionNode: '${{parameters.versionNode}}'
+                        workingDirectory: '${{parameters.workingDirectory}}'
+                    
+                    - template: ../build/npm-build.yml@templates
+                      parameters:
+                        workingDirectory: '${{parameters.workingDirectory}}'
+                        npmCommandToRun: '${{parameters.npmCommandToRun}}'
+
+                    - template: ../deploy/s3-deploy.yml@templates
+                      parameters:
+                        awsCredentials: '${{ parameters.awsCredentials }}'
+                        bucketName: '${{ parameters.bucketName }}'
+                        sourceFolder: '${{ parameters.sourceFolder }}'
+                        s3artifactfolder: '${{ parameters.s3artifactfolder }}'
+                        s3BucketArtifact: '${{ parameters.s3BucketArtifact }}'
+                        ambiente: '${{ parameters.ambiente }}'
+
+          - deployment: CloudfrontInvalidation
+            dependsOn: DeployS3
+            displayName: Cloudfront Invalidation
+            environment: ${{ parameters.projectName }}-${{ parameters.environment }}
+            strategy:
+              runOnce:
+                deploy:
+                  steps:                  
+                    - template: ../deploy/cf-deploy.yml@templates
+                      parameters:
+                        awsCredentialsCloudfront: '${{ parameters.awsCredentialsCloudfront }}'
+                        cloudfrontDistributionId: '${{ parameters.cloudfrontDistributionId }}'  
+
+
+##TECNOLOGIA S3       
+      - ${{if and(eq(parameters.tecnologia, 's3'),eq(parameters.pais, 'co'), ne(parameters.versionNode, '18.10.0'))}}:
+          - deployment: DeployS3
+            displayName: Deploy to S3
+            environment: ${{ parameters.projectName }}-${{ parameters.environment }}
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    - checkout: self
+                    - ${{ if eq(parameters.npmauth, 'true') }}:
+                      - task: npmAuthenticate@0
+                        displayName: 'npm Authenticate'
+                        inputs:
+                          workingFile: '${{parameters.customBuildFolder}}/.npmrc'
+                    - template: ../dependencies/npm-dependencies.yml@templates
+                      parameters:
+                        versionNode: '${{parameters.versionNode}}'
+                        workingDirectory: '${{parameters.workingDirectory}}'
+                    
+                    - template: ../build/npm-build.yml@templates
+                      parameters:
+                        workingDirectory: '${{parameters.workingDirectory}}'
+                        npmCommandToRun: '${{parameters.npmCommandToRun}}'
+
+                    - template: ../deploy/s3-deploy.yml@templates
+                      parameters:
+                        awsCredentials: '${{ parameters.awsCredentials }}'
+                        bucketName: '${{ parameters.bucketName }}'
+                        sourceFolder: '${{ parameters.sourceFolder }}'
+                        s3artifactfolder: '${{ parameters.s3artifactfolder }}'
+                        s3BucketArtifact: '${{ parameters.s3BucketArtifact }}'
+                        ambiente: '${{ parameters.ambiente }}'
+                            
+                    - template: ../deploy/cf-deploy.yml@templates
+                      parameters:
+                        awsCredentialsCloudfront: '${{ parameters.awsCredentialsCloudfront }}'
+                        cloudfrontDistributionId: '${{ parameters.cloudfrontDistributionId }}'  
+
+                    - ${{if eq(parameters.projectName, 'tienda-virtual-frontend')}}:
+                      - task: DownloadPipelineArtifact@2
+                        inputs:
+                          source: current
+                          artifact: Build
+                          path: '$(System.DefaultWorkingDirectory)/dist/webME2'
+                          displayName: Publish pipeline artifact

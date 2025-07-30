@@ -1,0 +1,137 @@
+# Authority: Alejandro Cadena - DevOps Engineer - XpertGroup SAS
+# Everything wrote in this file has been made to work and be compatible with all Novaventa projects (as long as it's been possible). Took some code from the old "master-pipelines" repository that exists in this same project.
+# Used in 4001-retail-fisico-front
+parameters:
+  # Mandatory parameters
+  - name: workingDirectory
+    type: string
+  - name: commandToExecuteTests
+    type: string
+  - name: foldersToCover
+    type: string
+  - name: pathsToExclude
+    type: string
+  - name: pathToCoverageResults
+    type: string
+  - name: versionNode
+    type: string
+    default: '14'
+  # Optional parameters
+  - name: containerImage
+    type: string
+    default: 'public.ecr.aws/l5y4z0h2/master-pipelines-public:node-prd'
+  - name: previousJobName
+    type: string
+    default: ''
+  - name: projectName
+    type: string
+    default: $(Build.Repository.Name)
+  - name: sonarJavaBinaries
+    type: string
+    default: ''
+  - name: sonarJavaLibraries
+    type: string
+    default: ''
+  - name: sonarVerbose
+    type: boolean
+    default: false
+  - name: projectKey
+    type: string
+    default: novaventa.$(Build.Repository.Name)
+  - name: tagsSonar
+    type: string
+    default: novaventa
+
+jobs:
+  - job: 'Tests_Angular'
+    timeoutInMinutes: 120
+    pool: Novaventa2
+    container: ${{parameters.containerImage}}
+    ${{ if ne(parameters.previousJobName, '') }}:
+      dependsOn: ${{parameters.previousJobName}}
+    workspace:
+      clean: all
+    variables:
+      - group: pipelines-info
+    displayName: Tests Angular
+    steps:
+      - task: NodeTool@0
+        displayName: Install Node v.${{parameters.versionNode}}
+        inputs:
+          versionSpec: '${{parameters.versionNode}}'
+          
+      - task: Npm@1
+        displayName: Resolving Dependencies
+        inputs:
+          command: 'install'
+          workingDir: ${{parameters.workingDirectory}}
+          customRegistry: 'useFeed'
+          customFeed: $(feed_id)
+
+      - task: Npm@1
+        displayName: Executing Npm Tests
+        inputs:
+          command: 'custom'
+          verbose: true
+          workingDir: '${{parameters.workingDirectory}}'
+          customCommand: '${{parameters.commandToExecuteTests}}'
+          customFeed: $(feed_id)
+      
+      - task: PublishTestResults@2
+        displayName: Publishing Test Results
+        condition: always()
+        inputs:
+          testResultsFormat: 'JUnit'
+          testResultsFiles: '**/TEST*.xml'
+          failTaskOnFailedTests: true
+
+      - script: |
+            curl --location --request POST 'https://sonarcloud.io/api/projects/create?name=${{parameters.projectName}}&organization=gruponutresa&project=${{parameters.projectKey}}' --header 'Authorization: Bearer $(TOKEN_SONAR)'
+        displayName: 'SonarCloud - Create Project'
+
+      - script: |
+            curl --location --request POST 'https://sonarcloud.io/api/project_tags/set?project=${{parameters.projectKey}}&tags=${{parameters.tagsSonar}}&' --header 'Authorization: Bearer $(TOKEN_SONAR)'
+        displayName: 'SonarCloud - Tagging project'
+
+      - script: |
+            curl --location --request POST 'https://sonarcloud.io/api/qualitygates/select?gateId=63462&organization=gruponutresa&projectKey=${{parameters.projectKey}}' --header 'Authorization: Bearer $(TOKEN_SONAR)'
+        displayName: 'SonarCloud - Associate Quality Gate'
+
+      - ${{ if ne(parameters.sonarJavaBinaries, '') }}:
+        - script: |
+            curl --location --request POST 'https://sonarcloud.io/api/qualityprofiles/add_project?language=java&organization=gruponutresa&project=${{parameters.projectKey}}&qualityProfile=Novaventa%20Way' --header 'Authorization: Bearer $(TOKEN_SONAR)'
+          displayName: 'SonarCloud - Associate Quality Profile'
+
+      - task: SonarCloudPrepare@1
+        displayName: 'Preparing SonarCloud'
+        inputs:
+          SonarCloud: 'SonarCloud-Novaventa'
+          organization: gruponutresa
+          scannerMode: 'CLI'
+          configMode: 'file'
+          cliProjectVersion:
+          extraProperties: |
+            sonar.projectBaseDir=${{parameters.workingDirectory}}
+            sonar.projectKey=novaventa.$(Build.Repository.Name)
+            sonar.projectName=$(Build.Repository.Name)    
+            sonar.projectVersion=$(Build.BuildId)
+            sonar.javascript.lcov.reportPaths=${{parameters.pathToCoverageResults}}
+            sonar.typescript.lcov.reportPaths=${{parameters.pathToCoverageResults}}
+            sonar.exclusions=${{parameters.pathsToExclude}}
+            sonar.sources=${{parameters.foldersToCover}}
+            sonar.scanner.metadataFilePath=$(Agent.TempDirectory)/sonar/$(Build.BuildNumber)/test/report-task.txt
+
+
+      - task: SonarCloudAnalyze@1
+        displayName: Running SonarCloud Analysis
+
+      - task: SonarCloudPublish@1
+        displayName: Publishing SonarCloud Report
+        inputs:
+          pollingTimeoutSec: '300'
+
+      - task: sonarcloud-buildbreaker@2
+        displayName: 'Validate QG SonarCloud'
+        inputs:
+          SonarCloud: 'SonarCloud-Novaventa'
+          organization: gruponutresa

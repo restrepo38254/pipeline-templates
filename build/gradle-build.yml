@@ -1,0 +1,21 @@
+parameters:
+  - name: workingDirectory
+    type: string
+  - name: commandBuild
+    type: string
+  - name: jdkVersion
+    type: string
+    default: 'default'
+
+steps:
+  - task: Gradle@3
+    inputs:
+      gradleWrapperFile: 'gradlew'
+      workingDirectory: ${{ parameters.workingDirectory }} 
+      tasks: ${{ parameters.commandBuild }}
+      publishJUnitResults: false
+      javaHomeOption: 'JDKVersion'
+      jdkVersionOption: ${{ parameters.jdkVersion }}
+      sonarQubeRunAnalysis: false
+      spotBugsAnalysis: false
+    displayName: Build project

@@ -1,0 +1,100 @@
+# Authority: Alejandro Cadena - DevOps Engineer - XpertGroup SAS
+# Everything wrote in this file has been made to work and be compatible with all Novaventa projects (as long as it's been possible).
+# This template is currently on use on pipeline 3812-mdr-java > azure-pipeline-ec2.yml
+parameters:
+  # Mandatory parameters
+  - name: applicationName
+    type: string
+  - name: artifactName
+    type: string
+  - name: warName
+    type: string
+  - name: awsAccountEnvironment
+    type: string
+ #   default: no013
+ #   values:
+ #     - nox012
+ #     - nox013
+ #     - no012
+ #     - no013
+  - name: env
+    type: string
+  # Optional parameters
+  - name: replaceToRoot
+    type: string
+    default: "false"
+  - name: agentPool
+    type: string
+    default: Novaventa2
+  - name: DeployName
+    type: string
+    default: Deploy
+  - name: availabilityZones
+    type: object
+    default:
+    - a
+jobs:
+  - deployment: ${{ parameters.DeployName }}
+    dependsOn: Build
+    environment: ${{ parameters.awsAccountEnvironment }}-${{ parameters.applicationName }}
+    condition: succeeded()
+    cancelTimeoutInMinutes: 0
+    pool: 
+      name: ${{ parameters.agentPool }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            # This task has such script because we need to check if we want to copy the war as ROOT.
+            # If so, it will copy it as ROOT and delete the previous ROOT folder created.
+            # If doesn't, it will need to get the .war file name (without the full path or the .war extension) and then copy it to the corresponding path and delete the corresponding previous folder.
+            # "sudo" prefix is needed in order to make changes directly to protected folders, need to check in a near future if this can be replaced with plain commands, without invoking sudo.\
+            - ${{if ne(length(join('', parameters.availabilityZones)), 1)}}:
+              - ${{each zone in parameters.availabilityZones}}:
+                - task: SSH@0
+                  inputs:
+                    sshEndpoint: 'sc-${{parameters.awsAccountEnvironment}}-ssh-${{parameters.applicationName}}-${{parameters.env}}-${{zone}}'
+                    runOptions: 'inline'
+                    inline: |
+                      for file in ./cicd/*.war; do
+                        if [[ '${{ parameters.replaceToRoot }}' == 'true' ]]; then
+                          sudo systemctl stop tomcat.service
+                          sudo cp $file /usr/share/tomcat/webapps/ROOT.war
+                          sudo rm -rf /usr/share/tomcat/webapps/ROOT
+                          sudo systemctl start tomcat.service
+                        else
+                          sudo systemctl stop tomcat.service
+                          filePathSplitted=(${file//// })
+                          fileName=${filePathSplitted[-1]}
+                          warName=${fileName::-4}
+                          sudo cp $file "/usr/share/tomcat/webapps/"$warName".war"
+                          sudo rm -rf "/usr/share/tomcat/webapps/"$warName
+                          sudo systemctl start tomcat.service
+                        fi
+                      done
+                    readyTimeout: '20000'
+                  displayName: Updating .war file to tomcat folder (${{zone}})
+            - ${{else}}:
+              - task: SSH@0
+                inputs:
+                  sshEndpoint: 'sc-${{parameters.awsAccountEnvironment}}-ssh-${{parameters.applicationName}}-${{parameters.env}}'
+                  runOptions: 'inline'
+                  inline: |
+                    for file in ./cicd/${{parameters.artifactName}}.war; do
+                      if [[ '${{ parameters.replaceToRoot }}' == 'true' ]]; then
+                        sudo systemctl stop tomcat.service
+                        sudo cp $file /usr/share/tomcat/webapps/ROOT.war
+                        sudo rm -rf /usr/share/tomcat/webapps/ROOT
+                        sudo systemctl start tomcat.service
+                      else
+                        sudo systemctl stop tomcat.service
+                        filePathSplitted=(${file//// })
+                        fileName=${filePathSplitted[-1]}
+                        warName=${{parameters.warName}}
+                        sudo cp $file "/usr/share/tomcat/webapps/"$warName".war"
+                        sudo rm -rf "/usr/share/tomcat/webapps/"$warName
+                        sudo systemctl start tomcat.service
+                      fi
+                    done
+                  readyTimeout: '20000'
+                displayName: Updating .war file to tomcat folder

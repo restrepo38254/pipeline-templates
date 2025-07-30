@@ -1,0 +1,38 @@
+parameters:
+  - name: awsServiceConnectionEnvironment
+    type: string
+  - name: s3BucketName
+    type: string
+  - name: localPathToUpload
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/dist/'
+  - name: s3artifactfolder
+    type: string
+  - name: s3BucketArtifact
+    type: string
+    default: 'ause1-no012-s3-artifacts'
+  - name: ambiente
+    type: string
+    default: 'qa'
+
+steps:
+  - task: S3Upload@1
+    inputs:
+      awsCredentials: '${{ parameters.awsServiceConnectionEnvironment }}'
+      regionName: 'us-east-1'
+      bucketName: '${{ parameters.s3BucketName }}'
+      sourceFolder: '${{ parameters.localPathToUpload }}'
+      globExpressions: '**'
+      createBucket: true
+    displayName: Upload to S3     
+  
+  - task: S3Upload@1
+    inputs:
+      awsCredentials: '${{ parameters.awsServiceConnectionEnvironment }}'
+      regionName: 'us-east-1'
+      bucketName: '${{ parameters.s3BucketArtifact }}'
+      sourceFolder: '${{ parameters.localPathToUpload }}'
+      targetFolder: '${{ parameters.s3artifactfolder }}$(Build.BuildNumber)-${{ parameters.ambiente }}'
+      globExpressions: '**'
+      createBucket: true
+    displayName: Upload to S3 Artifact Folder

@@ -1,0 +1,9 @@
+
+
+steps:
+
+  - task: k6-load-test@0
+    displayName: Executing Performance Tests
+    inputs:
+        filename: 'performance-test-k6-automated.js'
+        # args: 'k6 run script.js'

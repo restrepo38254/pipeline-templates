@@ -1,0 +1,109 @@
+# Authority: Alejandro Cadena - DevOps Engineer - XpertGroup SAS
+# Everything wrote in this file has been made to work and be compatible with all Novaventa projects (as long as it's been possible). Took some code from the old "master-pipelines" repository that exists in this same project.
+parameters:
+  # Mandatory parameters
+  - name: foldersToCover
+    type: string
+  - name: pathsToExclude
+    type: string
+  - name: pathToCoverageResults
+    type: string
+  - name: commandToExecuteTests
+    type: string
+  # Optional parameters
+  - name: containerImage
+    type: string
+    default: 'gradle:6-jdk11'
+  - name: customProjectSufix
+    type: string
+    default: ''
+  - name: previousJobName
+    type: string
+    default: ''
+  - name: sonarJavaBinaries
+    type: string
+    default: 'build/classes'
+  - name: sonarJavaLibraries
+    type: string
+    default: 'build'
+jobs:
+  - job: Tests_Java
+    pool: Novaventa2
+    ${{ if ne(parameters.previousJobName, '') }}:
+      dependsOn: ${{parameters.previousJobName}}
+    condition: succeeded()
+    cancelTimeoutInMinutes: 0
+    timeoutInMinutes: 75
+    container: 
+      image: ${{parameters.containerImage}}
+      volumes:
+        - /var/agents/.gradle:/root/.gradle
+    workspace:
+      clean: all
+    steps:
+      - task: Gradle@3
+        inputs:
+          gradleWrapperFile: 'gradlew'
+          options: '--info'
+          tasks: '${{parameters.commandToExecuteTests}}'
+          publishJUnitResults: false
+        displayName: 'Execute gradlew tests'
+
+      - task: PublishTestResults@2
+        condition: always()
+        inputs:
+          testResultsFormat: 'JUnit'
+          testResultsFiles: '**/TEST-*.xml'
+        displayName: 'Publish test results - JUnit'
+
+      - task: PublishCodeCoverageResults@2
+        condition: always()
+        inputs:
+          codeCoverageTool: 'JaCoCo'
+          summaryFileLocation: '${{parameters.pathToCoverageResults}}'
+        displayName: 'Publish code coverage results - JaCoCo'
+
+      - publish: '.'
+        artifact: AfterTestResults
+        displayName: Publish Pipeline Artifact
+        
+      # - task: SonarCloudPrepare@1
+      #   displayName: 'Preparing SonarCloud'
+      #   inputs:
+      #     SonarCloud: 'SonarCloud-Novaventa'
+      #     organization: gruponutresa
+      #     scannerMode: 'CLI'
+      #     configMode: 'file'
+      #     cliProjectVersion:
+      #     ${{ if ne(parameters.customProjectSufix, '') }}:
+      #       extraProperties: |
+      #         sonar.projectKey=$(Build.Repository.Name)-back-${{parameters.customProjectSufix}}-$(Build.SourceBranchName)
+      #         sonar.projectName=$(Build.Repository.Name)-back-${{parameters.customProjectSufix}}-$(Build.SourceBranchName)
+      #         sonar.projectVersion=$(Build.BuildId)
+      #         sonar.sources=${{parameters.foldersToCover}}
+      #         sonar.java.binaries=${{parameters.sonarJavaBinaries}}
+      #         sonar.java.libraries=${{parameters.sonarJavaLibraries}}
+      #         sonar.coverage.jacoco.xmlReportPaths=${{parameters.pathToCoverageResults}}
+      #         sonar.exclusions=${{parameters.pathsToExclude}}
+            
+      #     ${{ else }}:
+      #       extraProperties: |
+      #         sonar.projectKey=$(Build.Repository.Name)-back-$(Build.SourceBranchName)
+      #         sonar.projectName=$(Build.Repository.Name)-back-$(Build.SourceBranchName)
+      #         sonar.projectVersion=$(Build.BuildId)
+      #         sonar.sources=${{parameters.foldersToCover}}
+      #         sonar.java.binaries=${{parameters.sonarJavaBinaries}}
+      #         sonar.java.libraries=${{parameters.sonarJavaLibraries}}
+      #         sonar.coverage.jacoco.xmlReportPaths=${{parameters.pathToCoverageResults}}
+      #         sonar.exclusions=${{parameters.pathsToExclude}}
+      # - script: |
+      #     export params=`echo $SONARQUBE_SCANNER_PARAMS | sed -e 's/"sonar.branch.name":"[a-zA-Z,/.,-]*",//g'`
+      #     echo $params
+      #     echo "##vso[task.setvariable variable=SONARQUBE_SCANNER_PARAMS]$params"
+      #   displayName: 'Setting SonarCloud Branch'
+      # - task: SonarCloudAnalyze@1
+      #   displayName: 'Analyzing code with SonarCloud'
+      # - task: SonarCloudPublish@1
+      #   displayName: 'Publishing SonarCloud results'
+      #   inputs:
+      #     pollingTimeoutSec: '300'

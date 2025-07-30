@@ -1,0 +1,36 @@
+## This template is used by the following repos:
+##
+## 3809-callcenter-java
+
+parameters:
+  - name: commandToExecuteTests
+    type: string
+  - name: pathToCoverageResults
+    type: string
+  - name: reportDirectory
+    type: string
+    default: 'reports/jacoco/test'
+
+steps:
+  - task: Gradle@3
+    inputs:
+      gradleWrapperFile: 'gradlew'
+      options: '--info'
+      tasks: '${{parameters.commandToExecuteTests}}'
+      publishJUnitResults: false
+    displayName: 'Execute gradlew tests'
+
+  # - task: PublishTestResults@2
+  #   condition: always()
+  #   inputs:
+  #     testResultsFormat: 'JUnit'
+  #     testResultsFiles: '**/*.xml'
+  #     failTaskOnFailedTests: true
+  #   displayName: 'Publish test results - JUnit'
+
+  # - task: PublishCodeCoverageResults@1
+  #   inputs:
+  #     codeCoverageTool: 'JaCoCo'
+  #     summaryFileLocation: '${{parameters.pathToCoverageResults}}'
+  #     reportDirectory: '${{parameters.reportDirectory}}'
+  #   displayName: 'Publish code coverage results - JaCoCo'

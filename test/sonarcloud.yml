@@ -1,0 +1,56 @@
+# Author: Fabian Rojas - DevOps Engineer - XpertGroup SAS
+# Everything wrote in this file has been made to work and be compatible with all Novaventa projects (as long as it's been possible). Took some code from the old "master-pipelines" repository that exists in this same project.
+parameters:
+  # Mandatory parameters
+  - name: foldersToCover
+    type: string
+  - name: sonarPathCoverage
+    type: string
+  - name: sonarExclusions
+    type: string
+  - name: sonarSources
+    type: string
+  - name: 
+jobs:
+  - job: SonarCloud Analisys
+    pool: Novaventa2
+#   ${{ if ne(parameters.previousJobName, '') }}:
+#     dependsOn: ${{parameters.previousJobName}}
+    condition: succeeded()
+    workspace:
+      clean: all
+    steps:
+      - script: |
+          cd $(Build.SourcesDirectory)
+          ls -la
+        displayName: 'Get route'
+
+      - task: SonarCloudPrepare@1
+        displayName: 'SonarCloud Prepare'
+        inputs:
+          SonarCloud: 'SonarCloud-Novaventa'
+          organization: gruponutresa
+          scannerMode: 'CLI'
+          configMode: 'file'
+          cliProjectVersion:
+          extraProperties: |
+            sonar.projectKey=$(Build.Repository.Name)-$(Build.SourceBranchName)
+            sonar.projectName=$(Build.Repository.Name)-$(Build.SourceBranchName)
+            sonar.javascript.lcov.reportPaths=${{parameters.sonarPathCoverage}}
+            sonar.exclusions=${{parameters.sonarExclusions}}
+            sonar.projectBaseDir=${{parameters.workingDir}}        
+            sonar.sources=${{parameters.sonarSources}}
+            sonar.projectVersion=$(Build.BuildId)
+            sonar.sourceEncoding=utf-8
+            sonar.branch.name
+      - task: SonarCloudAnalyze@1
+        displayName: Run SonarCloud Analisys
+      - task: SonarCloudPublish@1
+        inputs:
+          pollingTimeoutSec: '300'
+        displayName: Publish SonarCloud Report
+      - task: sonarcloud-buildbreaker@2
+        inputs:
+          SonarCloud: 'SonarCloud-Novaventa'
+          organization: gruponutresa
+        displayName: 'Validate QG SonarCloud'

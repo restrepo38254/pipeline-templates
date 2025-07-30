@@ -1,0 +1,59 @@
+parameters:
+  - name: repositoryName
+    type: string
+  - name: awsCredentials
+    type: string
+  - name: ecsClusterName
+    type: string
+  - name: ecsServiceName
+    type: string
+  - name: dockerfileName
+    type: string
+    default: 'Dockerfile'
+  - name: dockerArgumentsString
+    type: string
+    default: ''
+  - name: region
+    type: string
+    default: 'us-east-1'
+
+steps:
+  - task: Docker@2
+    displayName: Build docker image
+    inputs:
+      repository: ${{ parameters.repositoryName }}
+      command: 'build'
+      Dockerfile: ${{ parameters.dockerfileName }}
+      tags: |
+        $(Build.BuildNumber)
+        latest
+      arguments: '${{ parameters.dockerArgumentsString }}'
+
+  - task: ECRPushImage@1
+    inputs:
+      awsCredentials: ${{ parameters.awsCredentials }}
+      regionName: 'us-east-1'
+      imageSource: 'imagename'
+      sourceImageName: ${{ parameters.repositoryName }}
+      repositoryName: ${{ parameters.repositoryName }}
+      pushTag: '$(Build.BuildNumber)'
+    displayName: Upload image to ECR ($(Build.BuildNumber))
+
+  - task: ECRPushImage@1
+    inputs:
+      awsCredentials: ${{ parameters.awsCredentials }}
+      regionName: 'us-east-1'
+      imageSource: 'imagename'
+      sourceImageName: ${{ parameters.repositoryName }}
+      repositoryName: ${{ parameters.repositoryName }}
+      pushTag: 'latest'
+    displayName: Upload image to ECR
+   
+  - task: AWSCLI@1
+    displayName: Reload ECS service
+    inputs:
+      awsCredentials: ${{ parameters.awsCredentials }}
+      regionName: ${{ parameters.region }}
+      awsCommand: 'ecs'
+      awsSubCommand: 'update-service'
+      awsArguments: '--cluster ${{ parameters.ecsClusterName }} --service ${{ parameters.ecsServiceName }} --force-new-deployment'

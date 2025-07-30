@@ -1,0 +1,45 @@
+parameters: 
+
+    - name: awsServiceConnectionCloudfront
+      type: string
+    - name: cloudfrontDistributionId
+      type: string
+    - name: awsAccountEnvironment
+      type: string
+      default: ''
+    - name: artifactName
+      type: string
+      default: ''
+    - name: artifactFolder 
+      type: string
+      default: ''
+    - name: s3Folder
+      type: string
+      default: ''
+    - name: projectName
+      type: string
+      default: ''
+
+jobs:
+  - deployment: Deploy
+    # dependsOn: Build
+    environment: ${{ parameters.projectName }}-${{ parameters.awsAccountEnvironment }}
+    # condition: not(or(failed(), canceled()))
+    cancelTimeoutInMinutes: 0
+    pool: 
+      name: Novaventa2
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: none
+# create invalidation request to cloudfront distribution
+
+          - task: AWSCLI@1
+            inputs:
+              awsCredentials: '${{ parameters.awsServiceConnectionCloudfront }}'
+              regionName: 'us-east-1'
+              awsCommand: 'cloudfront'
+              awsSubCommand: 'create-invalidation'
+              awsArguments: '--distribution-id ${{ parameters.cloudfrontDistributionId }} --paths /*'
+            displayName: Generate invalidation

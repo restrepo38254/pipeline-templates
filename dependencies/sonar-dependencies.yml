@@ -1,0 +1,13 @@
+## This template is used by the following repos:
+## 
+## 3809-callcenter-java
+
+parameters:
+  - name: versionNode
+    type: string
+    
+steps:
+  - task: NodeTool@0
+    displayName: Install Node v.${{parameters.versionNode}}
+    inputs:
+      versionSpec: '${{parameters.versionNode}}'

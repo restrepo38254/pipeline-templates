@@ -1,0 +1,25 @@
+parameters:
+  - name: containerRegistry
+    type: string
+
+jobs:
+  - job: Build
+    workspace:
+      clean: all
+    steps:
+    - task: NodeAndNpmTool@1
+      inputs:
+        versionSpec: '10.x'
+      displayName: Install node
+    - task: Gradle@3
+      inputs:
+        gradleWrapperFile: 'gradlew'
+        workingDirectory: 'callcenter'
+        tasks: 'build'
+        publishJUnitResults: false
+        javaHomeOption: 'JDKVersion'
+        sonarQubeRunAnalysis: false
+        spotBugsAnalysis: false
+      displayName: Build project
+
+

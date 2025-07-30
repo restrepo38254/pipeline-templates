@@ -1,0 +1,102 @@
+parameters:
+  - name: awsServiceConnectionEnvironment
+    type: string
+  - name: awsServiceConnectionCloudfront
+    type: string
+  - name: s3BucketName
+    type: string
+  - name: cloudfrontDistributionId
+    type: string
+  - name: projectName
+    type: string
+  - name: environment
+    type: string
+  - name: localPathToUpload
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/dist/'
+  - name: npmCommandsWorkingDir
+    type: string
+    default: '$(System.DefaultWorkingDirectory)'
+  - name: npmCommandToRun
+    type: string
+    default: 'run build'
+  - name: previousJob
+    type: string
+    default: ''
+  - name: versionNode
+    type: string
+    default: '14.x'
+
+jobs:
+  - deployment: BuildDeployS3
+    ${{ if ne(parameters.previousJob, '') }}:
+      dependsOn: '${{ parameters.previousJob }}'
+    displayName: Build to Deploy to S3
+    pool:
+      vmImage: 'ubuntu-latest'
+    environment: ${{ parameters.projectName }}-${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+            - task: NodeTool@0
+              inputs:
+                versionSpec: '${{ parameters.versionNode }}'
+
+            - task: Npm@1
+              inputs:
+                command: 'ci'
+                workingDir: '${{ parameters.npmCommandsWorkingDir }}'
+                customRegistry: 'useFeed'
+                customFeed: $(feed_id)
+              displayName: Install NPM dependencies
+            
+            - task: Npm@1
+              inputs:
+                command: 'custom'
+                workingDir: '${{ parameters.npmCommandsWorkingDir }}'
+                customCommand: '${{ parameters.npmCommandToRun }}'
+                customFeed: $(feed_id)
+                verbose: true
+              displayName: Build frontend
+
+            - publish: ${{ parameters.localPathToUpload }}
+              artifact: BuildArtifact
+              displayName: Publish Pipeline Artifact
+
+  - deployment: DeployS3
+    dependsOn: 'BuildDeployS3'
+    displayName: Deploy to S3
+    pool: Novaventa2
+    environment: ${{ parameters.projectName }}-${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: none
+            
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                source: current
+                artifact: BuildArtifact
+                path: '${{ parameters.localPathToUpload }}'
+
+            - task: S3Upload@1
+              inputs:
+                awsCredentials: '${{ parameters.awsServiceConnectionEnvironment }}'
+                regionName: 'us-east-1'
+                bucketName: '${{ parameters.s3BucketName }}'
+                sourceFolder: '${{ parameters.localPathToUpload }}'
+                globExpressions: '**'
+                createBucket: true
+              displayName: Upload to S3     
+                     
+            - task: AWSCLI@1
+              inputs:
+                awsCredentials: '${{ parameters.awsServiceConnectionCloudfront }}'
+                regionName: 'us-east-1'
+                awsCommand: 'cloudfront'
+                awsSubCommand: 'create-invalidation'
+                awsArguments: '--distribution-id ${{ parameters.cloudfrontDistributionId }} --paths /*'
+              displayName: Generate invalidation

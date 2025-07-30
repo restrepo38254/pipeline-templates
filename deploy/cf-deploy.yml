@@ -1,0 +1,15 @@
+parameters:
+  - name: awsServiceConnectionCloudfront
+    type: string
+  - name: cloudfrontDistributionId
+    type: string
+
+steps:
+  - task: AWSCLI@1
+    inputs:
+      awsCredentials: '${{ parameters.awsServiceConnectionCloudfront }}'
+      regionName: 'us-east-1'
+      awsCommand: 'cloudfront'
+      awsSubCommand: 'create-invalidation'
+      awsArguments: '--distribution-id ${{ parameters.cloudfrontDistributionId }} --paths /*'
+    displayName: Generate invalidation

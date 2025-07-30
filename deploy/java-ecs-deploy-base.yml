@@ -1,0 +1,126 @@
+# Used on 4002-gestion-ingreso-vp-general, 4002-gestion-ingreso-vp-notificaciones pipelines
+
+parameters:
+  - name: workingDirectory
+    type: string
+    default: '.'
+  - name: repositoryName
+    type: string
+  - name: awsCredentials
+    type: string
+  - name: ecsClusterName
+    type: string
+  - name: ecsServiceName
+    type: string
+  - name: dockerfileName
+    type: string
+    default: 'Dockerfile'
+  - name: dockerArgumentsString
+    type: string
+    default: ''
+  - name: gradletask
+    type: string
+    default: 'build'
+  - name: versionNode
+    type: string
+    default: ''
+  - name: securefiles
+    default: false
+  - name: replaceTokenTarget
+    type: string 
+  - name: applicationName
+    type: string
+
+jobs:
+  - job: Build
+    workspace:
+      clean: all
+    steps:
+
+    - task: NodeAndNpmTool@1
+      inputs:
+        versionSpec: '${{parameters.versionNode}}'
+      displayName: Install node
+    
+    - ${{if eq(parameters.securefiles, 'true') }}:
+      - task: DownloadSecureFile@1
+        inputs:
+          secureFile: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+        displayName: 'dowloading ${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json' 
+
+      - task: CopyFiles@2
+        displayName: 'Copy Files to: $(System.DefaultWorkingDirectory)'
+        inputs:
+          SourceFolder: '$(Agent.TempDirectory)'
+          Contents: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+          TargetFolder: '$(System.DefaultWorkingDirectory)'
+      
+      - task: replacetokens@6
+        displayName: 'Set files'
+        inputs:
+          sources: ${{parameters.replaceTokenTarget}}
+          encoding: 'auto'
+          tokenPattern: 'default'
+          addBOM: true
+          missingVarLog: 'warn'
+          missingVarAction: keep
+          ifNoFilesFound: 'warn'
+          additionalVariables: '@**/*.json'
+          transforms: false
+          recursive: false
+          telemetryOptout: true
+    
+    - task: Gradle@3
+      inputs:
+        gradleWrapperFile: 'gradlew'
+        workingDirectory: ${{ parameters.workingDirectory }}
+        tasks: ${{ parameters.gradletask }}
+        publishJUnitResults: false
+        javaHomeOption: 'JDKVersion'
+        sonarQubeRunAnalysis: false
+        spotBugsAnalysis: false
+      displayName: Build project
+
+    - task: Docker@2
+      displayName: Build docker image
+      inputs:
+        repository: ${{ parameters.repositoryName }}
+        command: 'build'
+        Dockerfile: ${{ parameters.dockerfileName }}
+        tags: 'latest'
+        arguments: '${{ parameters.dockerArgumentsString }}'       
+   
+    - task: ECRPushImage@1
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        imageSource: 'imagename'
+        sourceImageName: ${{ parameters.repositoryName }}
+        repositoryName: ${{ parameters.repositoryName }}
+        pushTag: '$(Build.BuildNumber)'
+      displayName: Upload image to ECR ($(Build.BuildNumber))
+
+    - task: ECRPushImage@1
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        imageSource: 'imagename'
+        sourceImageName: ${{ parameters.repositoryName }}
+        repositoryName: ${{ parameters.repositoryName }}
+        pushTag: 'latest'
+      displayName: Upload image to ECR
+
+    - task: AWSCLI@1
+      displayName: Reload ECS service
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        awsCommand: 'ecs'
+        awsSubCommand: 'update-service'
+        awsArguments: '--cluster ${{ parameters.ecsClusterName }} --service ${{ parameters.ecsServiceName }} --force-new-deployment'
+
+    - task: DeleteFiles@1
+      condition: succeeded()
+      displayName: Clean workspace
+      inputs:
+        Contents: '**/*'

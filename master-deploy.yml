@@ -1,0 +1,47 @@
+stages:
+    - template: deploy/deploy.yml
+      parameters:
+        # functionalRepo: ${{parameters.functionalRepo}}
+        # projectName: ${{parameters.projectName}}
+        # repoName: ${{parameters.repoName}}
+        tecnologia: ${{parameters.tecnologia}}
+        applicationName: ${{parameters.applicationName}}
+        awsAccountEnvironment: ${{parameters.awsAccountEnvironment}}
+        s3BucketName: ${{parameters.s3BucketName}}
+        localPathToUpload: ${{parameters.localPathToUpload}}
+        previousJob: ${{parameters.previousJob}}
+        replaceToRoot: ${{parameters.replaceToRoot}}
+        availabilityZones: ${{parameters.availabilityZones}}
+        workingDirectory: ${{parameters.workingDirectory}}
+        repositoryName: ${{parameters.repositoryName}}
+        awsCredentials: ${{parameters.awsCredentials}}
+        ecsClusterName: ${{parameters.ecsClusterName}}
+        ecsServiceName: ${{parameters.ecsServiceName}}
+        dockerfileName: ${{parameters.dockerfileName}}
+        dockerArgumentsString: ${{parameters.dockerArgumentsString}}
+        containerImage: ${{parameters.containerImage}}
+        gradletask: ${{parameters.gradletask}}
+        s3artifactfolder: ${{ parameters.s3artifactfolder }}
+        s3BucketArtifact: ${{ parameters.s3BucketArtifact }}
+        ambiente: ${{ parameters.ambiente }}
+        buildPath: ${{parameters.buildPath}}
+        previousStage: ${{parameters.previousStage}}
+        pais: ${{parameters.pais}}
+        awsServiceConnectionEnvironment: ${{parameters.awsServiceConnectionEnvironment}}
+        awsCredentialsCloudfront: ${{parameters.awsCredentialsCloudfront}}
+        bucketName: ${{parameters.bucketName}}
+        cloudfrontDistributionId: ${{parameters.cloudfrontDistributionId}}
+        projectName: ${{parameters.projectName}}
+        environment: ${{parameters.environment}}
+        sourceFolder: ${{parameters.sourceFolder}}
+        # npmCommandsWorkingDir: ${{parameters.npmCommandsWorkingDir}}
+        npmCommandToRun: ${{parameters.npmCommandToRun}}
+        versionNode: ${{parameters.versionNode}}
+        lambdaStopB: ${{parameters.lambdaStopB}}
+        lambdaDeployB: ${{parameters.lambdaDeployB}}
+        customBuildFolder: ${{parameters.customBuildFolder}}
+        npmauth: ${{parameters.npmauth}}
+        variablesreplace: ${{parameters.variablesreplace}}
+        secret_jwt: ${{parameters.secret_jwt}}
+    
+    

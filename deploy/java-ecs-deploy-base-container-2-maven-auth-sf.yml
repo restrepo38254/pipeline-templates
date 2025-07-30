@@ -1,0 +1,189 @@
+#Used on 0000-svn-angular-java-pos, gestion-casos-java 4001-retail-fisico-back pipeline 
+
+parameters:
+  - name: workingDirectory
+    type: string
+    default: '.'
+  - name: repositoryName
+    type: string
+  - name: awsCredentials
+    type: string
+  - name: ecsClusterName
+    type: string
+  - name: ecsServiceName
+    type: string
+  - name: dockerfileName
+    type: string
+    default: 'Dockerfile'
+  - name: dockerArgumentsString
+    type: string
+    default: ''
+  - name: containerImage
+    type: string
+    default: 'gradle:6-jdk11'
+  - name: gradletask
+    type: string
+    default: 'war'
+  - name: buildPath
+    type: string
+  - name: replaceTokenTarget
+    type: string 
+  - name: applicationName
+    type: string 
+  # - name: s3artifactfolder
+  #   type: string
+  # - name: s3BucketArtifact
+  #   type: string
+  # - name: ambiente
+  #   type: string
+  #   default: 'qa'
+
+jobs:
+  - job: Build
+    variables:
+      GRADLE_USER_HOME: $(Pipeline.Workspace)/.gradle
+    container: 
+      image: ${{parameters.containerImage}}
+      volumes:
+        - gradle:/root/.gradle
+    workspace:
+      clean: all
+    steps:
+    - task: NodeAndNpmTool@1
+      inputs:
+        versionSpec: '10.x'
+      displayName: Install node
+
+    - task: MavenAuthenticate@0
+      displayName: 'Maven Authenticate'
+      inputs:
+        artifactsFeeds: Novaventa
+    # - task: npmAuthenticate@0
+    #   displayName: 'npm Authenticate'
+    #   inputs:
+    #     workingFile: '${{parameters.customBuildFolder}}/.npmrc'
+
+    # - task: Cache@2
+    #   inputs:
+    #     key: 'gradle | "$(Agent.OS)"' # Swap build.gradle.kts for build.gradle when using Groovy
+    #     restoreKeys: |
+    #       gradle | "$(Agent.OS)"
+    #       gradle
+    #     path: $(GRADLE_USER_HOME)
+    #   displayName: Configure gradle caching
+    - task: DownloadSecureFile@1
+      inputs:
+        secureFile: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+      displayName: 'dowloading ${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json' 
+
+    - task: CopyFiles@2
+      displayName: 'Copy Files from: ${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+      inputs:
+        SourceFolder: '$(Agent.TempDirectory)'
+        Contents: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+        TargetFolder: '$(System.DefaultWorkingDirectory)'
+
+    - task: replacetokens@6
+      displayName: 'Set files'
+      inputs:
+        sources: ${{parameters.replaceTokenTarget}}
+        encoding: 'auto'
+        tokenPattern: 'default'
+        addBOM: true
+        missingVarLog: 'warn'
+        missingVarAction: keep
+        ifNoFilesFound: 'warn'
+        additionalVariables: '@**/*.json'
+        transforms: false
+        recursive: false
+        telemetryOptout: true
+
+
+    - task: Gradle@3
+      inputs:
+        gradleWrapperFile: 'gradlew'
+        workingDirectory: ${{ parameters.workingDirectory }}
+        tasks: ${{ parameters.gradletask }}
+        publishJUnitResults: false
+        javaHomeOption: 'JDKVersion'
+        sonarQubeRunAnalysis: false
+        spotBugsAnalysis: false
+        # options: '--build-cache'
+      displayName: Build project
+
+    # - script: |   
+    #     # stop the Gradle daemon to ensure no files are left open (impacting the save cache operation later)
+    #     ./gradlew --stop    
+    #   displayName: Build
+
+    # - task: DockerInstaller@0
+    #   inputs:
+    #    dockerVersion: '17.09.0-ce'
+    #    displayName: Docker Install
+    # - task: CopyFiles@2
+    #   inputs:
+    #     contents: './build/libs/**'
+    #     targetFolder: $(Build.ArtifactStagingDirectory)
+
+    - publish: '${{ parameters.buildPath }}'
+      artifact: Build
+
+  - job: PushImageReloadECSService
+    dependsOn: Build
+    workspace:
+      clean: all
+    steps:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        source: current
+        artifact: Build
+        path: '${{ parameters.buildPath }}'
+
+    - task: Docker@2
+      displayName: Build docker image
+      inputs:
+        repository: ${{ parameters.repositoryName }}
+        command: 'build'
+        Dockerfile: ${{ parameters.dockerfileName }}
+        tags: 'latest'
+        arguments: '${{ parameters.dockerArgumentsString }}'  
+        
+    - task: ECRPushImage@1
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        imageSource: 'imagename'
+        sourceImageName: ${{ parameters.repositoryName }}
+        repositoryName: ${{ parameters.repositoryName }}
+        pushTag: '$(Build.BuildNumber)'
+      displayName: Upload image to ECR ($(Build.BuildNumber))
+
+    - task: ECRPushImage@1
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        imageSource: 'imagename'
+        sourceImageName: ${{ parameters.repositoryName }}
+        repositoryName: ${{ parameters.repositoryName }}
+        pushTag: 'latest'
+      displayName: Upload image to ECR
+
+    # - task: S3Upload@1
+    #   inputs:
+    #     awsCredentials: '${{ parameters.awsCredentials }}'
+    #     regionName: 'us-east-1'
+    #     bucketName: '${{ parameters.s3BucketArtifact }}'
+    #     sourceFolder:  ${{ parameters.workingDirectory }}
+    #     targetFolder: '${{ parameters.s3artifactfolder }}$(Build.BuildNumber)-${{ parameters.ambiente }}'
+    #     globExpressions: '**'
+    #     createBucket: true
+    #   displayName: Upload to S3 Artifact Folder
+
+    - task: AWSCLI@1
+      displayName: Reload ECS service
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        awsCommand: 'ecs'
+        awsSubCommand: 'update-service'
+        awsArguments: '--cluster ${{ parameters.ecsClusterName }} --service ${{ parameters.ecsServiceName }} --force-new-deployment'

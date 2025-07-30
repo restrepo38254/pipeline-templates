@@ -1,0 +1,63 @@
+parameters:
+  - name: awsServiceConnectionEnvironment
+    type: string
+  - name: s3BucketName
+    type: string
+  - name: projectName
+    type: string
+  - name: environment
+    type: string
+  - name: localPathToUpload
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/dist/'
+  - name: npmCommandsWorkingDir
+    type: string
+    default: '$(System.DefaultWorkingDirectory)'
+  - name: npmCommandToRun
+    type: string
+    default: 'run build'
+  - name: previousJob
+    type: string
+    default: ''
+
+jobs:
+  - deployment: DeployS3
+    ${{ if ne(parameters.previousJob, '') }}:
+      dependsOn: '${{ parameters.previousJob }}'
+    displayName: Deploy to S3
+    pool: Novaventa2
+    environment: ${{ parameters.projectName }}-${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+            - task: NodeTool@0
+              inputs:
+                versionSpec: '14.x'
+
+            - task: Npm@1
+              inputs:
+                command: 'install'
+                workingDir: '${{ parameters.npmCommandsWorkingDir }}'
+                customRegistry: 'useFeed'
+                customFeed: $(feed_id)
+              displayName: Install NPM dependencies
+            
+            - task: Npm@1
+              inputs:
+                command: 'custom'
+                workingDir: '${{ parameters.npmCommandsWorkingDir }}'
+                customCommand: '${{ parameters.npmCommandToRun }}'
+                customFeed: $(feed_id)
+              displayName: Build frontend
+
+            - task: S3Upload@1
+              inputs:
+                awsCredentials: '${{ parameters.awsServiceConnectionEnvironment }}'
+                regionName: 'us-east-1'
+                bucketName: '${{ parameters.s3BucketName }}'
+                sourceFolder: '${{ parameters.localPathToUpload }}'
+                globExpressions: '**'
+                createBucket: true
+              displayName: Upload to S3     

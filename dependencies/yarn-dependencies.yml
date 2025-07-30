@@ -1,0 +1,23 @@
+## This template is used by the following repos:
+## 
+## 3620-tienda-virtual-react
+
+parameters:
+  - name: versionNode
+    type: string
+  - name: versionYarn
+    type: string
+    
+steps:
+  - task: NodeTool@0
+    displayName: Install Node v.${{parameters.versionNode}}
+    inputs:
+      versionSpec: '${{parameters.versionNode}}'
+
+  - script: |
+      npm install yarn@${{parameters.versionYarn}} --global
+    displayName: Install yarn v.${{parameters.versionYarn}}
+
+  - script: |
+      yarn
+    displayName: Yarn install dependencies

@@ -1,0 +1,8 @@
+parameters:
+  - name: commandBuild
+    type: string
+
+steps:
+  - script: |
+      yarn ${{parameters.commandBuild}}
+    displayName: Yarn build

@@ -1,0 +1,8 @@
+parameters:
+  - name: commandLinter
+    type: string
+
+steps:
+  - script: |
+      yarn ${{parameters.commandLinter}}
+    displayName: Yarn linter

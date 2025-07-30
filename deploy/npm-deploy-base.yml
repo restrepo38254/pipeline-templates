@@ -1,0 +1,53 @@
+jobs:
+  - job: Build_Deploy
+    displayName: Build and Deploy
+    steps:
+      - task: NodeTool@0
+        displayName: Install Node v.${{parameters.versionNode}}
+        inputs:
+          versionSpec: '${{parameters.versionNode}}'
+
+      - task: Npm@1
+        displayName: Resolve Depedencies
+        inputs:
+          command: 'install'
+          workingDir: ${{parameters.workingDir}}
+          customRegistry: 'useFeed'
+          customFeed: $(feed_id)
+
+      - task: Npm@1
+        displayName: 'Build'
+        inputs:
+          command: 'custom'
+          verbose: true
+          workingDir: '${{parameters.workingDir}}'
+          customCommand: '${{parameters.commandBuild}}'
+          customFeed: $(feed_id)
+
+      - ${{if not(parameters.commandPublish)}}: #Ejecuta el task cuando el parametro esté vacio
+        - task: Npm@1
+          displayName: Publish
+          condition: and(succeeded(), eq(variables['Build.SourceBranchName'], 'master'))
+          inputs:
+            command: 'publish'
+            workingDir: '${{parameters.workingDir}}'
+            customRegistry: 'useFeed'
+            customFeed: $(feed_id)
+      
+      - ${{if parameters.commandPublish}}: #Ejecuta el task cuando el parametro no esté vacio
+        - task: Npm@1
+          displayName: Publish
+          condition: and(succeeded(), eq(variables['Build.SourceBranchName'], 'master'))
+          inputs:
+            command: 'custom'
+            verbose: true
+            workingDir: '${{parameters.workingDir}}'
+            customCommand: '${{parameters.commandPublish}}'
+            customRegistry: 'useFeed'
+            customFeed: $(feed_id)
+
+      - task: DeleteFiles@1
+        condition: succeeded()
+        displayName: Clean workspace
+        inputs:
+          Contents: '**/*'

@@ -1,0 +1,27 @@
+## This template is used by the following repos:
+## 
+## 3722-nautilus-commerce-angular-js
+
+parameters:
+  - name: versionNode
+    type: string
+  - name: workingDirectory
+    type: string
+    
+steps:
+  - task: NodeTool@0
+    displayName: Install Node v.${{parameters.versionNode}}
+    inputs:
+      versionSpec: '${{parameters.versionNode}}'
+
+  - bash: |
+      npm cache clean --force
+    displayName: Clean npm cache
+
+  - task: Npm@1
+    displayName: Resolving Dependencies
+    inputs:
+      command: 'install'
+      workingDir: ${{parameters.workingDirectory}}
+      customRegistry: 'useFeed'
+      customFeed: $(feed_id)

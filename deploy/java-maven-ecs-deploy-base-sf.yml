@@ -1,0 +1,161 @@
+  #Used on 4002-gestion-ingreso-vp-personal-clientes pipeline
+
+parameters:
+  - name: workingDirectory
+    type: string
+    default: '.'
+  - name: commandBuild
+    type: string
+  - name: repositoryName
+    type: string
+  - name: awsCredentials
+    type: string
+  - name: ecsClusterName
+    type: string
+  - name: ecsServiceName
+    type: string
+  - name: dockerfileName
+    type: string
+    default: 'Dockerfile'
+  - name: dockerArgumentsString
+    type: string
+    default: ''
+  - name: containerImage
+    type: string
+    default: 'maven:3.6.3-jdk-11-openj9'
+  - name: buildPath
+    type: string
+  - name: replaceTokenTarget
+    type: string 
+  - name: applicationName
+    type: string 
+
+
+jobs:
+  - job: Build
+    container: 
+      image: ${{parameters.containerImage}}
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+      displayName: 'Clone repository'
+      fetchDepth: 1
+    
+    - task: DownloadSecureFile@1
+      inputs:
+        secureFile: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+      displayName: 'dowloading ${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json' 
+
+    - task: CopyFiles@2
+      displayName: 'Copy Files to: $(System.DefaultWorkingDirectory)'
+      inputs:
+        SourceFolder: '$(Agent.TempDirectory)'
+        Contents: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+        TargetFolder: '$(System.DefaultWorkingDirectory)'
+
+    # - task: replacetokens@3
+    #   displayName: 'Set files'
+    #   inputs:
+    #     targetFiles: ${{parameters.replaceTokenTarget}}
+    #     encoding: 'auto'
+    #     writeBOM: true
+    #     actionOnMissing: 'warn'
+    #     keepToken: false
+    #     tokenPrefix: '#{'
+    #     tokenSuffix: '}#'
+    #     useLegacyPattern: false
+    #     variableFiles: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+    #     enableTelemetry: true
+
+    - task: replacetokens@6
+      displayName: 'Set files'
+      inputs:
+        sources: ${{parameters.replaceTokenTarget}}
+        encoding: 'auto'
+        tokenPattern: 'default'
+        addBOM: true
+        missingVarLog: 'warn'
+        missingVarAction: keep
+        ifNoFilesFound: 'warn'
+        additionalVariables: '@**/*.json'
+        transforms: false
+        recursive: false
+        telemetryOptout: true
+
+    - task: Maven@4
+      displayName: 'Build'
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: '${{parameters.commandBuild}}'
+        publishJUnitResults: false
+
+    - publish: '${{ parameters.buildPath }}'
+      artifact: Build
+
+  - job: PushImageReloadECSService
+    dependsOn: Build
+    workspace:
+      clean: all
+    steps:
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        source: current
+        artifact: Build
+        path: '${{ parameters.buildPath }}'
+
+    - task: Docker@2
+      displayName: Build docker image
+      inputs:
+        repository: ${{ parameters.repositoryName }}
+        command: 'build'
+        Dockerfile: ${{ parameters.dockerfileName }}
+        tags: |
+          $(Build.BuildNumber)
+          latest
+        arguments: '${{ parameters.dockerArgumentsString }}'  
+        
+    - task: ECRPushImage@1
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        imageSource: 'imagename'
+        sourceImageName: ${{ parameters.repositoryName }}
+        repositoryName: ${{ parameters.repositoryName }}
+        pushTag: '$(Build.BuildNumber)'
+      displayName: Upload image to ECR ($(Build.BuildNumber))
+
+    - task: ECRPushImage@1
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        imageSource: 'imagename'
+        sourceImageName: ${{ parameters.repositoryName }}
+        repositoryName: ${{ parameters.repositoryName }}
+        pushTag: '$(Build.BuildNumber)'
+      displayName: Upload image to ECR ($(Build.BuildNumber))
+
+    - task: ECRPushImage@1
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        imageSource: 'imagename'
+        sourceImageName: ${{ parameters.repositoryName }}
+        repositoryName: ${{ parameters.repositoryName }}
+        pushTag: 'latest'
+      displayName: Upload image to ECR (latest)
+
+    - task: AWSCLI@1
+      displayName: Reload ECS service
+      inputs:
+        awsCredentials: ${{ parameters.awsCredentials }}
+        regionName: 'us-east-1'
+        awsCommand: 'ecs'
+        awsSubCommand: 'update-service'
+        awsArguments: '--cluster ${{ parameters.ecsClusterName }} --service ${{ parameters.ecsServiceName }} --force-new-deployment'
+
+    - task: DeleteFiles@1
+      condition: succeeded()
+      displayName: Clean workspace
+      inputs:
+        Contents: '**/*'

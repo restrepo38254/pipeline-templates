@@ -1,0 +1,79 @@
+#Used on 4002-gestion-ingreso-vp-lambdas pipeline
+
+parameters:
+  - name: workingDirectory
+    type: string
+    default: '.'
+  - name: commandBuild
+    type: string
+  - name: containerImage
+    type: string
+    default: 'maven:3.9.4-eclipse-temurin-17'
+  - name: buildPath
+    type: string
+  - name: replaceTokenTarget
+    type: string 
+  - name: applicationName
+    type: string
+
+jobs:
+  - job: Build
+    container: 
+      image: ${{parameters.containerImage}}
+    workspace:
+      clean: all
+    steps:
+    - checkout: self
+      displayName: 'Clone repository'
+      fetchDepth: 1
+    
+    - task: DownloadSecureFile@1
+      inputs:
+        secureFile: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+      displayName: 'dowloading ${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json' 
+
+    - task: CopyFiles@2
+      displayName: 'Copy Files to: $(System.DefaultWorkingDirectory)'
+      inputs:
+        SourceFolder: '$(Agent.TempDirectory)'
+        Contents: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+        TargetFolder: '$(System.DefaultWorkingDirectory)'
+
+    # - task: replacetokens@3
+    #   displayName: 'Set files'
+    #   inputs:
+    #     targetFiles: ${{parameters.replaceTokenTarget}}
+    #     encoding: 'auto'
+    #     writeBOM: true
+    #     actionOnMissing: 'warn'
+    #     keepToken: false
+    #     tokenPrefix: '#{'
+    #     tokenSuffix: '}#'
+    #     useLegacyPattern: false
+    #     variableFiles: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+    #     enableTelemetry: true
+    
+    - task: replacetokens@6
+      displayName: 'Set files'
+      inputs:
+        sources: ${{parameters.replaceTokenTarget}}
+        encoding: 'auto'
+        tokenPattern: 'default'
+        addBOM: true
+        missingVarLog: 'warn'
+        missingVarAction: keep
+        ifNoFilesFound: 'warn'
+        additionalVariables: '@**/*.json'
+        transforms: false
+        recursive: false
+        telemetryOptout: true
+
+    - task: Maven@4
+      displayName: 'Build'
+      inputs:
+        mavenPomFile: '${{parameters.workingDirectory}}/pom.xml'
+        goals: '${{parameters.commandBuild}}'
+        publishJUnitResults: false
+    
+    - publish: '${{ parameters.buildPath }}'
+      artifact: Build

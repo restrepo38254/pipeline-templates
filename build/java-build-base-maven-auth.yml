@@ -1,0 +1,187 @@
+# Authority: Alejandro Cadena - DevOps Engineer - XpertGroup SAS
+# Everything wrote in this file has been made to work and be compatible with all Novaventa projects (as long as it's been possible).
+parameters:
+  # Mandatory parameters
+  - name: applicationName
+    type: string
+    default: ''
+  - name: applicationName2
+    type: string
+    default: ''
+  - name: awsAccountEnvironment
+    type: string
+#      - nox011
+#      - nox012
+#      - nox013
+#      - no011
+#      - no012
+#      - no013
+  # Optional parameters, but you may almost always use them though
+  - name: nodejsVersion
+    type: string
+    default: 'none'
+  - name: containerImage
+    type: string
+    default: 'gradle:6-jdk11'
+  - name: customBuildFolder
+    type: string
+    default: 'none'
+  - name: shouldUploadArtifact
+    type: boolean
+    default: true
+  - name: shouldUploadAzureArtifact
+    type: boolean
+    default: false
+  - name: copyToOtherInstance
+    type: boolean
+    default: false
+  - name: availabilityZones
+    type: object
+    default:
+    - a
+  - name: previousJobName
+    type: string
+    default: ''
+  - name: libsPath
+    type: string
+    default: './build/libs/*'
+  - name: buildCommand
+    type: string
+    default: 'gradle war'
+  - name: shouldReplaceTokens
+    type: boolean
+    default: false
+  - name: fileToReplaceTokens
+    type: string
+    default: none
+  - name: npmauth
+    type: boolean
+    default: false
+  - name: s3artifactfolder
+    type: string
+    default: ''
+  - name: s3BucketArtifact
+    type: string
+    default: ''
+  - name: ambiente
+    type: string
+    default: 'qa'
+  - name: localPathToUpload
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/dist/'
+  - name: awsServiceConnectionEnvironment
+    type: string
+    default: ''
+
+jobs:
+  - job: Build
+    pool: Novaventa2
+    container: ${{parameters.containerImage}}
+    condition: succeeded()
+    cancelTimeoutInMinutes: 0
+    ${{ if ne(parameters.previousJobName, '') }}:
+      dependsOn: ${{parameters.previousJobName}}
+    workspace:
+      clean: all
+    steps:
+      - ${{if ne(parameters.nodejsVersion,'none')}}:
+        - task: NodeTool@0
+          displayName: Installing node v${{parameters.nodejsVersion}}
+          inputs:
+            versionSpec: '${{parameters.nodejsVersion}}'
+      - checkout: self
+        displayName: Clone repository
+        fetchDepth: 1
+        
+      - task: MavenAuthenticate@0
+        displayName: 'Maven Authenticate'
+        inputs:
+          artifactsFeeds: Novaventa
+
+      - ${{ if eq(parameters.npmauth, 'true') }}:
+        - task: npmAuthenticate@0
+          displayName: 'npm Authenticate'
+          inputs:
+            workingFile: '${{parameters.customBuildFolder}}/.npmrc'
+
+      - ${{if eq(parameters.shouldReplaceTokens, 'true')}}:
+        - task: replacetokens@5
+          inputs:
+            rootDirectory: '.'
+            targetFiles: '${{ parameters.fileToReplaceTokens }}'
+            encoding: 'auto'
+            tokenPattern: 'default'
+            writeBOM: true
+            actionOnMissing: 'warn'
+            keepToken: false
+            actionOnNoFiles: 'continue'
+            enableTransforms: false
+            enableRecursion: false
+            useLegacyPattern: false
+            enableTelemetry: true
+      
+      - bash: |
+          if [[ '${{parameters.customBuildFolder}}' != 'none' ]]; then
+            cd ${{parameters.customBuildFolder}}
+            echo "entered a custom folder at generating artifact stage - ${{parameters.customBuildFolder}}"
+          fi
+          ${{ parameters.buildCommand }}
+        displayName: Generating artifact
+      - ${{ if and(not(eq(variables['Build.Reason'], 'PullRequest')), or(contains(variables['Build.SourceBranch'], 'dev'), contains(variables['Build.SourceBranch'], 'feature'), contains(variables['Build.SourceBranch'], 'qa'), contains(variables['Build.SourceBranch'], 'master'))) }}:      
+        - ${{ if eq(parameters.shouldUploadAzureArtifact, true) }}:
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: ${{parameters.libsPath}}
+              artifactName: 'zippedArtifact'
+            displayName: 'Uploading compiled artifact'
+
+        - ${{ if eq(parameters.shouldUploadArtifact, true) }}:
+          - bash: |
+              if [[ '${{parameters.customBuildFolder}}' != 'none' ]]; then
+                mkdir ${{parameters.customBuildFolder}}
+                cd ${{parameters.customBuildFolder}}
+                echo "entered a custom folder at copying artifact stage - ${{parameters.customBuildFolder}}"
+              fi
+              cp ${{ parameters.libsPath }} $(Build.SourcesDirectory)
+            displayName: Copying artifact to main folder
+          - ${{if ne(length(join('', parameters.availabilityZones)), 1)}}:
+            - ${{each zone in parameters.availabilityZones}}:
+              - task: CopyFilesOverSSH@0
+                inputs:
+                  sshEndpoint: 'sc-${{ parameters.awsAccountEnvironment }}-ssh-${{ parameters.applicationName }}-${{zone}}'
+                  sourceFolder: '.'
+                  contents: '*.war'
+                  targetFolder: './cicd'
+                  readyTimeout: '20000'
+          - ${{else}}:
+            - task: CopyFilesOverSSH@0
+              inputs:
+                sshEndpoint: 'sc-${{ parameters.awsAccountEnvironment }}-ssh-${{ parameters.applicationName }}'
+                sourceFolder: '.'
+                contents: '*.war'
+                targetFolder: './cicd'
+                readyTimeout: '20000'
+              displayName: 'CopyFilesOverSSH to ${{ parameters.applicationName }}'
+
+            - ${{ if eq(parameters.copyToOtherInstance, true) }}:
+              - task: CopyFilesOverSSH@0
+                inputs:
+                  sshEndpoint: 'sc-${{ parameters.awsAccountEnvironment }}-ssh-${{ parameters.applicationName2 }}'
+                  sourceFolder: '.'
+                  contents: '*.war'
+                  targetFolder: './cicd'
+                  readyTimeout: '20000'
+                displayName: 'CopyFilesOverSSH to ${{ parameters.applicationName2 }}'
+
+      - task: S3Upload@1
+        inputs:
+          awsCredentials: '${{ parameters.awsServiceConnectionEnvironment }}'
+          regionName: 'us-east-1'
+          bucketName: '${{ parameters.s3BucketArtifact }}'
+          sourceFolder: '$(Build.SourcesDirectory)'
+          targetFolder: '${{ parameters.s3artifactfolder }}$(Build.BuildNumber)-${{ parameters.ambiente }}'
+          globExpressions: '*.war'
+          createBucket: true
+        displayName: Upload to S3 Artifact Folder  
+
+      

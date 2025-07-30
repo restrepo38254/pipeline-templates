@@ -1,0 +1,121 @@
+# Authority: Alejandro Cadena - DevOps Engineer - XpertGroup SAS
+# Everything wrote in this file has been made to work and be compatible with all Novaventa projects (as long as it's been possible).
+parameters:
+  # Mandatory parameters
+  - name: applicationName
+    type: string
+  - name: awsAccountEnvironment
+    type: string
+    values:
+      - nox011
+      - nox012
+      - nox013
+      - no011
+      - no012
+      - no013
+  # Optional parameters, but you may almost always use them though
+  - name: nodejsVersion
+    type: string
+    default: 'none'
+  - name: containerImage
+    type: string
+    default: 'gradle:6-jdk11'
+  - name: customBuildFolder
+    type: string
+    default: 'none'
+  - name: shouldUploadArtifact
+    type: boolean
+    default: true
+  - name: shouldUploadAzureArtifact
+    type: boolean
+    default: false
+  - name: availabilityZones
+    type: object
+    default:
+    - a
+  - name: previousJobName
+    type: string
+    default: ''
+  - name: libsPath
+    type: string
+    default: './build/libs/*'
+  - name: buildCommand
+    type: string
+    default: 'gradle war'
+  - name: shouldReplaceTokens
+    type: boolean
+    default: false
+  - name: fileToReplaceTokens
+    type: string
+    default: none
+
+jobs:
+  - job: Build
+    pool: Novaventa2
+    workspace:
+      clean: all
+    steps:
+        - task: NodeTool@0
+          displayName: Installing node v${{parameters.nodejsVersion}}
+          inputs:
+            versionSpec: '${{parameters.nodejsVersion}}'
+      - checkout: self
+        displayName: Clone repository
+        fetchDepth: 1
+
+      - ${{if eq(parameters.shouldReplaceTokens, 'true')}}:
+        - task: replacetokens@5
+          inputs:
+            rootDirectory: '.'
+            targetFiles: '${{ parameters.fileToReplaceTokens }}'
+            encoding: 'auto'
+            tokenPattern: 'default'
+            writeBOM: true
+            actionOnMissing: 'warn'
+            keepToken: false
+            actionOnNoFiles: 'continue'
+            enableTransforms: false
+            enableRecursion: false
+            useLegacyPattern: false
+            enableTelemetry: true
+      
+      - bash: |
+          if [[ '${{parameters.customBuildFolder}}' != 'none' ]]; then
+            cd ${{parameters.customBuildFolder}}
+            echo "entered a custom folder at generating artifact stage - ${{parameters.customBuildFolder}}"
+          fi
+          ${{ parameters.buildCommand }}
+        displayName: Generating artifact
+        
+      - ${{ if eq(parameters.shouldUploadAzureArtifact, true) }}:
+        - task: PublishBuildArtifacts@1
+          inputs:
+            pathToPublish: ${{parameters.libsPath}}
+            artifactName: 'zippedArtifact'
+          displayName: 'Uploading compiled artifact'
+
+      - ${{ if eq(parameters.shouldUploadArtifact, true) }}:
+        - bash: |
+            if [[ '${{parameters.customBuildFolder}}' != 'none' ]]; then
+              cd ${{parameters.customBuildFolder}}
+              echo "entered a custom folder at copying artifact stage - ${{parameters.customBuildFolder}}"
+            fi
+            cp ${{ parameters.libsPath }} $(Build.SourcesDirectory)
+          displayName: Copying artifact to main folder
+        - ${{if ne(length(join('', parameters.availabilityZones)), 1)}}:
+          - ${{each zone in parameters.availabilityZones}}:
+            - task: CopyFilesOverSSH@0
+              inputs:
+                sshEndpoint: 'sc-${{ parameters.awsAccountEnvironment }}-ssh-${{ parameters.applicationName }}-${{zone}}'
+                sourceFolder: '.'
+                contents: '*.war'
+                targetFolder: './cicd'
+                readyTimeout: '20000'
+        - ${{else}}:
+          - task: CopyFilesOverSSH@0
+            inputs:
+              sshEndpoint: 'sc-${{ parameters.awsAccountEnvironment }}-ssh-${{ parameters.applicationName }}'
+              sourceFolder: '.'
+              contents: '*.war'
+              targetFolder: './cicd'
+              readyTimeout: '20000'

@@ -1,0 +1,185 @@
+# Authority: Alejandro Cadena - DevOps Engineer - XpertGroup SAS
+# Everything wrote in this file has been made to work and be compatible with all Novaventa projects (as long as it's been possible).
+# This template is currently on use on pipeline 3812-mdr-java > azure-pipeline-ec2.yml
+parameters:
+  # Mandatory parameters
+  - name: applicationName
+    type: string
+  - name: awsAccountEnvironment
+    type: string
+#      - nox011
+#      - nox012
+#      - nox013
+#      - no011
+#      - no012
+#      - no013
+  - name: env
+    type: string
+  # Optional parameters, but you may almost always use them though
+  - name: nodejsVersion
+    type: string
+    default: 'none'
+  - name: containerImage
+    type: string
+    default: 'gradle:6-jdk11'
+  - name: customBuildFolder
+    type: string
+    default: 'none'
+  - name: shouldUploadArtifact
+    type: boolean
+    default: true
+  - name: shouldUploadAzureArtifact
+    type: boolean
+    default: false
+  - name: availabilityZones
+    type: object
+    default:
+    - a
+  - name: previousJobName
+    type: string
+    default: ''
+  - name: libsPath
+    type: string
+    default: './build/libs/*'
+  - name: buildCommand
+    type: string
+    default: 'gradle war'
+  - name: shouldReplaceTokens
+    type: boolean
+    default: false
+  - name: fileToReplaceTokens
+    type: string
+    default: none
+  - name: npmauth
+    type: boolean
+    default: true
+  - name: s3artifactfolder
+    type: string
+  - name: s3BucketArtifact
+    type: string
+  - name: ambiente
+    type: string
+    default: 'qa'
+  - name: localPathToUpload
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/dist/'
+  - name: awsServiceConnectionEnvironment
+    type: string
+  - name: securefiles
+    default: false
+  - name: replaceTokenTarget
+    type: string 
+  - name: applicationNameSF
+    type: string
+
+jobs:
+  - job: Build
+    pool: Novaventa2
+    container: ${{parameters.containerImage}}
+    condition: succeeded()
+    cancelTimeoutInMinutes: 0
+    ${{ if ne(parameters.previousJobName, '') }}:
+      dependsOn: ${{parameters.previousJobName}}
+    workspace:
+      clean: all
+    steps:
+      - ${{if ne(parameters.nodejsVersion,'none')}}:
+        - task: NodeTool@0
+          displayName: Installing node v${{parameters.nodejsVersion}}
+          inputs:
+            versionSpec: '${{parameters.nodejsVersion}}'
+      - checkout: self
+        displayName: Clone repository
+        fetchDepth: 1
+
+      - ${{if eq(parameters.securefiles, 'true') }}:
+        - task: DownloadSecureFile@1
+          inputs:
+            secureFile: '${{parameters.applicationNameSF}}-$(Build.SourceBranchName)-sf.json'
+          displayName: 'dowloading ${{parameters.applicationNameSF}}-$(Build.SourceBranchName)-sf.json' 
+
+        - task: CopyFiles@2
+          displayName: 'Copy Files to: $(System.DefaultWorkingDirectory)'
+          inputs:
+            SourceFolder: '$(Agent.TempDirectory)'
+            Contents: '${{parameters.applicationNameSF}}-$(Build.SourceBranchName)-sf.json'
+            TargetFolder: '$(System.DefaultWorkingDirectory)'
+        
+        - task: replacetokens@6
+          displayName: 'Set files'
+          inputs:
+            sources: ${{parameters.replaceTokenTarget}}
+            encoding: 'auto'
+            tokenPattern: 'default'
+            addBOM: true
+            missingVarLog: 'warn'
+            missingVarAction: keep
+            ifNoFilesFound: 'warn'
+            additionalVariables: '@**/*.json'
+            transforms: false
+            recursive: false
+            telemetryOptout: true
+            
+      - task: MavenAuthenticate@0
+        displayName: 'Maven Authenticate'
+        inputs:
+          artifactsFeeds: Novaventa
+      - ${{ if eq(parameters.npmauth, 'true') }}:
+        - task: npmAuthenticate@0
+          displayName: 'npm Authenticate'
+          inputs:
+            workingFile: '${{parameters.customBuildFolder}}/.npmrc'
+      - bash: |
+          if [[ '${{parameters.customBuildFolder}}' != 'none' ]]; then
+            cd ${{parameters.customBuildFolder}}
+            echo "entered a custom folder at generating artifact stage - ${{parameters.customBuildFolder}}"
+          fi
+          ${{ parameters.buildCommand }}
+        displayName: Generating artifact
+        
+      - ${{ if eq(parameters.shouldUploadAzureArtifact, true) }}:
+        - task: PublishBuildArtifacts@1
+          inputs:
+            pathToPublish: ${{parameters.libsPath}}
+            artifactName: 'zippedArtifact'
+          displayName: 'Uploading compiled artifact'
+
+      - ${{ if eq(parameters.shouldUploadArtifact, true) }}:
+        - bash: |
+            if [[ '${{parameters.customBuildFolder}}' != 'none' ]]; then
+              mkdir ${{parameters.customBuildFolder}}
+              cd ${{parameters.customBuildFolder}}
+              echo "entered a custom folder at copying artifact stage - ${{parameters.customBuildFolder}}"
+            fi
+            cp ${{ parameters.libsPath }} $(Build.SourcesDirectory)
+          displayName: Copying artifact to main folder
+        - ${{if ne(length(join('', parameters.availabilityZones)), 1)}}:
+          - ${{each zone in parameters.availabilityZones}}:
+            - task: CopyFilesOverSSH@0
+              inputs:
+                sshEndpoint: 'sc-${{ parameters.awsAccountEnvironment }}-ssh-${{ parameters.applicationName }}-${{ parameters.env }}-${{zone}}'
+                sourceFolder: '.'
+                contents: '*.war'
+                targetFolder: './cicd'
+                readyTimeout: '20000'
+        - ${{else}}:
+          - task: CopyFilesOverSSH@0
+            inputs:
+              sshEndpoint: 'sc-${{ parameters.awsAccountEnvironment }}-ssh-${{ parameters.applicationName }}-${{ parameters.env }}'
+              sourceFolder: '.'
+              contents: '*.war'
+              targetFolder: './cicd'
+              readyTimeout: '20000'
+
+      - task: S3Upload@1
+        inputs:
+          awsCredentials: '${{ parameters.awsServiceConnectionEnvironment }}'
+          regionName: 'us-east-1'
+          bucketName: '${{ parameters.s3BucketArtifact }}'
+          sourceFolder: '$(Build.SourcesDirectory)'
+          targetFolder: '${{ parameters.s3artifactfolder }}$(Build.BuildNumber)-${{ parameters.ambiente }}'
+          globExpressions: '*.war'
+          createBucket: true
+        displayName: Upload to S3 Artifact Folder         
+
+      

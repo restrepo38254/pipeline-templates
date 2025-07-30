@@ -1,0 +1,79 @@
+#Used on 
+
+parameters: 
+    - name: lambdaName
+      type: string
+    - name: serviceConnectionName
+      type: string
+    - name: applicationName
+      type: string
+    - name: awsAccountEnvironment
+      type: string
+    - name: artifactName
+      type: string
+    - name: artifactFolder 
+      type: string
+    - name: bucketName
+      type: string
+    - name: s3InternalFolder
+      type: string
+    - name: filesToUpload
+      type: string
+      default: '**'
+    - name: runtime
+      type: string
+
+jobs:
+  - deployment: Deploy
+    dependsOn: Build
+    environment: ${{ parameters.awsAccountEnvironment }}-${{ parameters.applicationName }}
+    condition: succeeded()
+    cancelTimeoutInMinutes: 0
+    pool: 
+      name: Novaventa2
+    strategy:
+      runOnce:
+        deploy:
+          steps: 
+# upload .zip file to s3 bucket and update lambda code from the same bucket
+
+            - task: S3Upload@1
+              inputs:
+                awsCredentials: '${{ parameters.serviceConnectionName }}'
+                regionName: 'us-east-1'
+                bucketName: '${{ parameters.bucketName }}'
+                sourceFolder: '${{ parameters.artifactFolder }}'
+                targetFolder: '${{ parameters.s3InternalFolder }}'
+                globExpressions: filesToUpload
+                createBucket: true
+
+            # - task: LambdaDeployFunction@1
+            #   inputs:
+            #     awsCredentials: '${{ parameters.serviceConnectionName }}'
+            #     regionName: 'us-east-1'
+            #     deploymentMode: 'codeandconfiguration'
+            #     functionName: '${{ parameters.lambdaName }}'
+            #     codeLocation: 's3object'
+            #     s3Bucket: '${{ parameters.bucketName }}'
+            #     s3ObjectKey: '${{ parameters.s3InternalFolder }}/${{ parameters.artifactName }}'
+            #     runtime: '${{ parameters.runtime }}'
+
+            - task: LambdaDeployFunction@1
+              inputs:
+                awsCredentials: '${{ parameters.serviceConnectionName }}'
+                regionName: 'us-east-1'
+                deploymentMode: 'codeandconfiguration'
+                functionName: 'lambda-funtion-login-pipeline-test2'
+                functionHandler: 'org.springframework.cloud.function.adapter.aws.FunctionInvoker::handleRequest'
+                runtime: '${{ parameters.runtime }}'
+                codeLocation: 's3object'
+                s3Bucket: '${{ parameters.bucketName }}'
+                s3ObjectKey: '${{ parameters.s3InternalFolder }}/${{ parameters.artifactName }}'
+                roleARN: 'lambda-funtion-login-pipeline-test-role-greemk6a'
+                memorySize: '512'
+                tags: 'map-migrated=d-server-032in4j9c8u7n3'
+                securityGroups: 'sg-03c51bc26b48dd208'
+                subnets: |
+                  subnet-007036c47b1c0d57e
+                  subnet-0831c0bffc44d9eb1
+ 

@@ -1,0 +1,85 @@
+## This template is used by the following repos:
+##
+## 3809-callcenter-java
+
+parameters:
+  - name: commandToExecuteTests
+    type: string
+  - name: pathToCoverageResults
+    type: string
+  - name: reportDirectory
+    type: string
+    default: 'reports/jacoco/test'
+  - name: securefiles
+    default: false
+  - name: replaceTokenTarget
+    type: string 
+  - name: applicationName
+    type: string
+  - name: workingDirectory
+    type: string
+    default: $(System.DefaultWorkingDirectory)
+  - name: gradleWrapperFile
+    type: string
+    default: gradlew
+
+steps:
+  - ${{if eq(parameters.securefiles, 'true') }}:
+    - task: DownloadSecureFile@1
+      inputs:
+        secureFile: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+      displayName: 'dowloading ${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json' 
+
+    - task: CopyFiles@2
+      displayName: 'Copy Files to: $(System.DefaultWorkingDirectory)'
+      inputs:
+        SourceFolder: '$(Agent.TempDirectory)'
+        Contents: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+        TargetFolder: '$(System.DefaultWorkingDirectory)'
+    
+    - task: replacetokens@6
+      displayName: 'Set files'
+      inputs:
+        sources: ${{parameters.replaceTokenTarget}}
+        encoding: 'auto'
+        tokenPattern: 'default'
+        addBOM: true
+        missingVarLog: 'warn'
+        missingVarAction: keep
+        ifNoFilesFound: 'warn'
+        additionalVariables: '@**/*.json'
+        transforms: false
+        recursive: false
+        telemetryOptout: true
+
+  - task: Gradle@3
+    inputs:
+      gradleWrapperFile: '${{parameters.gradleWrapperFile}}'
+      options: '--info'
+      tasks: '${{parameters.commandToExecuteTests}}'
+      workingDirectory: '${{parameters.workingDirectory}}'
+      publishJUnitResults: true
+    displayName: 'Execute gradlew tests'
+    continueOnError: false
+
+  - task: PublishTestResults@2
+    condition: always()
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/*.xml'
+      failTaskOnFailedTests: true
+    displayName: 'Publish test results - JUnit'
+    continueOnError: true
+
+  - task: PublishCodeCoverageResults@2
+    condition: always()
+    inputs:
+      codeCoverageTool: 'JaCoCo'
+      summaryFileLocation: '${{parameters.pathToCoverageResults}}'
+      reportDirectory: '${{parameters.reportDirectory}}'
+    displayName: 'Publish code coverage results - JaCoCo'
+    continueOnError: true
+  
+  - publish: '.'
+    artifact: AfterTestResults
+    displayName: Publish Pipeline Artifact

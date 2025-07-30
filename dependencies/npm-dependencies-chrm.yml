@@ -1,0 +1,36 @@
+## This template is used by the following repos:
+## 
+## 0000-svn-angular-java-frontend
+
+parameters:
+  - name: versionNode
+    type: string
+  - name: workingDirectory
+    type: string
+  - name: commandToInstall
+    type: string
+    default: 'install'
+    
+steps:
+  - task: UseNode@1
+    inputs:
+      version: '${{parameters.versionNode}}'
+  
+  - task: NodeTool@0
+    displayName: Install Node v.${{parameters.versionNode}}
+    inputs:
+      versionSpec: '${{parameters.versionNode}}'
+
+  - task: Npm@1
+    displayName: Resolving Dependencies
+    inputs:
+      command: ${{parameters.commandToInstall}}
+      workingDir: ${{parameters.workingDirectory}}
+      customRegistry: 'useFeed'
+      customFeed: $(feed_id)
+
+  - script: |
+        apt -f install -y
+        apt-get install -y wget
+        wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+        apt-get install ./google-chrome-stable_current_amd64.deb -y

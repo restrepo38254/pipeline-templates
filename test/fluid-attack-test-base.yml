@@ -1,0 +1,25 @@
+parameters:
+  - name: token_fluidattack
+    type: string
+    default: ''
+  - name: breakPoint
+    type: string
+  - name: repoName
+    type: string
+    default: ''
+
+jobs:
+  - job: Scan_Fluidattacks
+    # dependsOn: Build
+    condition: not(contains(variables['Build.SourceBranch'], 'master'))
+    #pool: Novaventa2
+    displayName: 'Scan Security'
+    continueOnError: false
+    cancelTimeoutInMinutes: 1
+    timeoutInMinutes: 15  
+
+    steps:
+      - script: | 
+          docker pull fluidattacks/forces:latest
+          docker run fluidattacks/forces:latest forces --strict --repo-name ${{ parameters.repoName }} --token ${{ parameters.token_fluidattack }} --breaking ${{ parameters.breakPoint }} -vvv --feature-preview
+        displayName: "Fluidattacks Scan"

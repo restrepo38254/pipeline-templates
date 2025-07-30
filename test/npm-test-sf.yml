@@ -1,0 +1,62 @@
+## This template is used by the following repos:
+## 
+## 3722-nautilus-commerce-angular-js
+
+parameters:
+  - name: workingDirectory
+    type: string
+  - name: commandToExecuteTests
+    type: string
+  - name: replaceTokenTarget
+    type: string 
+  - name: applicationName
+    type: string
+  - name: tokenPattern
+    type: string
+
+steps:
+
+  - task: DownloadSecureFile@1
+    inputs:
+      secureFile: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+    displayName: 'dowloading ${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json' 
+
+  - task: CopyFiles@2
+    displayName: 'Copy Files to: $(System.DefaultWorkingDirectory)'
+    inputs:
+      SourceFolder: '$(Agent.TempDirectory)'
+      Contents: '${{parameters.applicationName}}-$(Build.SourceBranchName)-sf.json'
+      TargetFolder: '$(System.DefaultWorkingDirectory)'
+
+  - task: replacetokens@6
+    displayName: 'Set files'
+    inputs:
+      sources: ${{parameters.replaceTokenTarget}}
+      encoding: 'auto'
+      tokenPattern: ${{parameters.tokenPattern}}
+      addBOM: false
+      missingVarLog: 'warn'
+      missingVarAction: keep
+      ifNoFilesFound: 'warn'
+      additionalVariables: '@**/*.json'
+      transforms: false
+      recursive: false
+      telemetryOptout: true
+
+  - task: Npm@1
+    displayName: Executing Npm Tests
+    inputs:
+      command: 'custom'
+      verbose: true
+      workingDir: '${{parameters.workingDirectory}}'
+      customCommand: '${{parameters.commandToExecuteTests}}'
+      customFeed: $(feed_id)
+  
+  - task: PublishTestResults@2
+    displayName: Publishing Test Results
+    condition: always()
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/TEST*.xml'
+      failTaskOnFailedTests: true
+

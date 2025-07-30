@@ -1,0 +1,35 @@
+## This template is used by the following repos:
+## 
+## 3722-nautilus-commerce-angular-js
+
+parameters:
+  - name: workingDirectory
+    type: string
+  - name: commandToExecuteTests
+    type: string
+  - name: publishArtifact
+    type: boolean
+    default: true
+
+steps:
+  - task: Npm@1
+    displayName: Executing Npm Tests
+    inputs:
+      command: 'custom'
+      verbose: true
+      workingDir: '${{parameters.workingDirectory}}'
+      customCommand: '${{parameters.commandToExecuteTests}}'
+      customFeed: $(feed_id)
+  
+  - task: PublishTestResults@2
+    displayName: Publishing Test Results
+    condition: always()
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/TEST*.xml'
+      failTaskOnFailedTests: true
+  
+  - ${{if eq(parameters.publishArtifact, 'true') }}:
+    - publish: '.'
+      artifact: AfterTestResults
+      displayName: Publish Pipeline Artifact

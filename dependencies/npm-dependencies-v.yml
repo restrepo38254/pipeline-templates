@@ -1,0 +1,39 @@
+## This template is used by the following repos:
+## 
+## 3722-nautilus-commerce-angular-js
+
+parameters:
+  - name: versionNode
+    type: string
+  - name: workingDirectory
+    type: string
+  - name: commandToInstall
+    type: string
+    default: 'install'
+    
+steps:
+  - task: UseNode@1
+    inputs:
+      version: '${{parameters.versionNode}}'
+  
+  - task: NodeTool@0
+    displayName: Install Node v.${{parameters.versionNode}}
+    inputs:
+      versionSpec: '${{parameters.versionNode}}'
+
+  - task: Npm@1
+    displayName: Resolving Dependencies
+    inputs:
+      command: ${{parameters.commandToInstall}}
+      workingDir: ${{parameters.workingDirectory}}
+      customRegistry: 'useFeed'
+      customFeed: $(feed_id)
+
+  - script: |
+        sudo apt -f install -y
+        sudo apt-get install -y wget
+        sudo wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+        sudo apt-get install ./google-chrome-stable_current_amd64.deb -y
+        sudo apt-get install libgtk2.0-0 libgtk-3-0 libgbm-dev libnotify-dev libgconf-2-4 libnss3 libxss1 libasound2 libxtst6 xauth xvfb
+        npm i chrome
+        npm install chromedriver --chromedriver-force-download

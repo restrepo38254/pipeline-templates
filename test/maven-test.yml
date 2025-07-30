@@ -1,0 +1,177 @@
+# Used on 4002-gestion-ingreso-vp-personal-clientes
+parameters:
+  # Mandatory parameters
+  - name: workingDirectory
+    type: string
+    default: '.'
+  - name: foldersToCover
+    type: string
+    default: '.'
+  - name: pathsToExclude
+    type: string
+    default: ''
+  - name: pathToCoverageResults
+    type: string
+    default: './target/site/jacoco/jacoco.xml'
+  - name: commandToInstall
+    type: string
+    default: 'install'
+  - name: commandTest
+    type: string
+  - name: reportDirectory
+    type: string
+    default: 'reports/jacoco/test'    
+  # Optional parameters
+  - name: projectKey
+    type: string
+    default: novaventa.$(Build.Repository.Name)
+  - name: projectName
+    type: string
+    default: $(Build.Repository.Name)  
+  - name: containerImage
+    type: string
+    default: 'maven:3.6.3-jdk-11-openj9'
+  - name: customProjectSufix
+    type: string
+    default: ''
+  - name: previousJobName
+    type: string
+    default: ''
+  - name: sonarJavaBinaries
+    type: string
+    default: 'build/classes'
+  - name: sonarJavaLibraries
+    type: string
+    default: 'build'
+  - name: sonarVerbose
+    type: boolean
+    default: false
+
+jobs:
+    - job: 'Test'
+      container: 
+        image: ${{parameters.containerImage}}
+      workspace:
+        clean: all
+      steps:
+        - checkout: self
+          displayName: 'Clone repository'
+          fetchDepth: 1
+        
+        # - task: Maven@3
+        #   displayName: 'Resolving Dependencies'
+        #   inputs:
+        #     mavenPomFile: 'pom.xml'
+        #     goals: '${{parameters.commandToInstall}}'
+        #     publishJUnitResults: false
+
+        # - task: Maven@3
+        # displayName: 'Build'
+        # inputs:
+        #     mavenPomFile: 'pom.xml'
+        #     goals: '${{parameters.commandBuild}}'
+        #     publishJUnitResults: false
+        
+        # - task: CopyFiles@2
+        # displayName: 'Copy Files to: $(Build.ArtifactStagingDirectory)'
+        # inputs:
+        #     SourceFolder: '$(Build.SourcesDirectory)'
+        #     Contents: |
+        #     *
+        #     docker/**
+        #     target/**
+        #     TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+        - task: Maven@4
+          displayName: 'Unit test'
+          continueOnError: true
+          inputs:
+            mavenPomFile: 'pom.xml'
+            goals: '${{parameters.commandTest}}'
+            publishJUnitResults: true
+
+        - task: PublishTestResults@2
+          condition: always()
+          inputs:
+            testResultsFormat: 'JUnit'
+            testResultsFiles: '**/TEST*.xml'
+
+        - task: UseDotNet@2
+          displayName: 'Use .NET Core sdk 7.0.x'
+          inputs:
+            version: 7.0.x
+
+        - task: PublishCodeCoverageResults@2
+          condition: always()
+          inputs:
+            codeCoverageTool: 'JaCoCo'
+            summaryFileLocation: '${{parameters.pathToCoverageResults}}'
+          env:
+            DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: 'true'
+        
+        - publish: '.'
+          artifact: AfterTestResults
+          displayName: Publish Pipeline Artifact
+
+        # - script: |
+        #     curl --location --request POST 'https://sonarcloud.io/api/projects/create?name=${{parameters.projectName}}&organization=gruponutresa&project=${{parameters.projectKey}}' --header 'Authorization: Bearer $(TOKEN_SONAR)'
+        #   displayName: 'SonarCloud - Create Project'
+
+        # - script: |
+        #       curl --location --request POST 'https://sonarcloud.io/api/project_tags/set?project=${{parameters.projectKey}}&tags=$(TAGS_SONAR)' --header 'Authorization: Bearer $(TOKEN_SONAR)'
+        #   displayName: 'SonarCloud - Tagging project'
+
+        # - script: |
+        #       curl --location --request POST 'https://sonarcloud.io/api/qualitygates/select?gateId=63462&organization=gruponutresa&projectKey=${{parameters.projectKey}}' --header 'Authorization: Bearer $(TOKEN_SONAR)'
+        #   displayName: 'SonarCloud - Associate Quality Gate'
+
+        # - ${{ if ne(parameters.sonarJavaBinaries, '') }}:
+        #   - script: |
+        #       curl --location --request POST 'https://sonarcloud.io/api/qualityprofiles/add_project?language=java&organization=gruponutresa&project=${{parameters.projectKey}}&qualityProfile=Novaventa%20Way' --header 'Authorization: Bearer $(TOKEN_SONAR)'
+        #     displayName: 'SonarCloud - Associate Quality Profile'
+
+        # - task: SonarCloudPrepare@1
+        #   displayName: 'Preparing SonarCloud'
+        #   inputs:
+        #     SonarCloud: 'SonarCloud-Novaventa'
+        #     organization: gruponutresa
+        #     scannerMode: 'CLI'
+        #     configMode: 'file'
+        #     cliProjectVersion:
+        #     ${{ if eq(parameters.sonarJavaBinaries, '') }}:
+        #       extraProperties: |
+        #         sonar.projectBaseDir=${{parameters.workingDirectory}}
+        #         sonar.projectKey=${{parameters.projectKey}}
+        #         sonar.projectName=${{parameters.projectName}}
+        #         sonar.projectVersion=$(Build.BuildId)
+        #         sonar.javascript.lcov.reportPaths=${{parameters.pathToCoverageResults}}
+        #         sonar.typescript.lcov.reportPaths=${{parameters.pathToCoverageResults}}
+        #         sonar.exclusions=${{parameters.pathsToExclude}}
+        #         sonar.sources=${{parameters.foldersToCover}}
+        #         sonar.verbose=${{parameters.sonarVerbose}}
+        #         sonar.sourceEncoding=utf-8
+        #     ${{ else }}:
+        #       extraProperties: |
+        #         sonar.projectKey=${{parameters.projectKey}}
+        #         sonar.projectName=${{parameters.projectName}}
+        #         sonar.projectVersion=$(Build.BuildId)
+        #         sonar.sources=${{parameters.foldersToCover}}
+        #         sonar.java.binaries=${{parameters.sonarJavaBinaries}}
+        #         sonar.java.libraries=${{parameters.sonarJavaLibraries}}
+        #         sonar.coverage.jacoco.xmlReportPaths=${{parameters.pathToCoverageResults}}
+        #         sonar.exclusions=${{parameters.pathsToExclude}}
+
+        # - task: SonarCloudAnalyze@1
+        #   displayName: 'Analyzing code with SonarCloud'
+      
+        # - task: SonarCloudPublish@1
+        #   displayName: 'Publishing SonarCloud results'
+        #   inputs:
+        #     pollingTimeoutSec: '300'
+
+        # - task: sonarcloud-buildbreaker@2
+        #   displayName: 'Validate QG SonarCloud'
+        #   condition: succeededOrFailed()
+        #   inputs:
+        #     SonarCloud: 'SonarCloud-Novaventa'
+        #     organization: gruponutresa

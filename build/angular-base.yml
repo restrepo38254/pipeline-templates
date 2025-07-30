@@ -1,0 +1,37 @@
+parameters:
+  - name: npmCommandsWorkingDir
+    type: string
+    default: '$(System.DefaultWorkingDirectory)'
+  - name: npmCommandToRun
+    type: string
+    default: 'run build'
+
+jobs:
+  - deployment: Build
+    displayName: Build project
+    pool: Novaventa2
+#   environment: ${{ parameters.projectName }}-${{ parameters.environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+            - task: NodeTool@0
+              inputs:
+                versionSpec: '14.x'
+
+            - task: Npm@1
+              inputs:
+                command: 'install'
+                workingDir: '${{ parameters.npmCommandsWorkingDir }}'
+                customRegistry: 'useFeed'
+                customFeed: $(feed_id)
+              displayName: Install NPM dependencies
+            
+            - task: Npm@1
+              inputs:
+                command: 'custom'
+                workingDir: '${{ parameters.npmCommandsWorkingDir }}'
+                customCommand: '${{ parameters.npmCommandToRun }}'
+                customFeed: $(feed_id)
+              displayName: Build frontend
