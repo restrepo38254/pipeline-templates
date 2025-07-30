@@ -1,0 +1,24 @@
+parameters:
+  - name: commandToExecuteTests
+    type: string
+
+steps:
+  - script: |
+      yarn ${{parameters.commandToExecuteTests}}
+    displayName: Yarn run tests
+#    continueOnError: true
+  
+  - task: PublishTestResults@2
+    displayName: Publishing Test Results
+    condition: always()
+    inputs:
+      testResultsFormat: 'JUnit'
+      testResultsFiles: '**/lcov.info'
+      failTaskOnFailedTests: true
+  
+  - task: PublishCodeCoverageResults@1
+    condition: always()
+    inputs:
+      codeCoverageTool: 'Cobertura'
+      summaryFileLocation: 'coverage/lcov.info'
+    displayName: 'Publish code coverage results - coverage'

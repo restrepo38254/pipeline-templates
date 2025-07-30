@@ -1,0 +1,44 @@
+#Used on 4004-registro-ingreso
+
+parameters:
+  - name: pythonVersion
+    type: string
+    default: '3.7'
+
+jobs:
+  - job: Build
+    workspace:
+      clean: all
+    steps:
+    #   - checkout: self
+    #     displayName: 'Clone repository'
+    #     fetchDepth: 1
+    #   - task: UsePythonVersion@0
+    #     displayName: Use Python ${{parameters.pythonVersion}}
+    #     inputs:
+    #       versionSpec: ${{parameters.pythonVersion}}
+    
+      # - script: |
+      #     curl https://bootstrap.pypa.io/get-pip.py | sudo python3
+      #     /usr/local/bin/pip install -r requirements.txt
+      #   displayName: Install dependencies
+
+      - script: |
+            python3 -m pip install --upgrade pip setuptools wheel
+        displayName: 'Install tools'
+
+      - script: |
+            ls -a /usr/local/bin/
+            /usr/local/bin/pip3.7 install -r requirements.txt
+        displayName: 'Install requirements'
+
+      - script: |
+          /usr/local/bin/pip install pytest pytest-azurepipelines
+          ls /home/ec2-user/.local/lib/python3.7/site-packages/pytest
+        displayName: Pytest
+      
+      - task: DeleteFiles@1
+        condition: Always()
+        displayName: Clean workspace
+        inputs:
+            Contents: '**/*'
