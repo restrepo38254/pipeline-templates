@@ -1,0 +1,21 @@
+## This template is used by the following repos:
+## 
+## 3720-consumidor-angular-js
+
+parameters:
+  - name: workingDirectory
+    type: string
+  - name: commandBuild
+    type: string
+
+steps:
+  - task: Npm@1
+    displayName: Executing Npm Build
+    inputs:
+      command: 'custom'
+      verbose: true
+      workingDir: '${{parameters.workingDirectory}}'
+      customCommand: '${{parameters.commandBuild}}'
+      customFeed: $(feed_id)
+
+

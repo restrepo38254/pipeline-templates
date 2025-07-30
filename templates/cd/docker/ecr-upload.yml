@@ -1,0 +1,32 @@
+parameters: 
+    - name: awsServiceConnection
+      type: string
+    - name: applicationName
+      type: string
+    - name: ercName
+      type: string
+
+jobs: 
+  displayName: Build & Push Docker image
+  pool:
+    name: Novaventa2
+  steps:
+  - task: Docker@2
+    displayName: Build an image
+    inputs:
+      command: build
+      dockerfile: '$(Build.SourcesDirectory)/Dockerfile'
+      buildContext: '$(Build.SourcesDirectory)'
+      repository: $(DOCKER_REPOSITORY_NAME)
+
+  - task: ECRPushImage@1
+    displayName: Push to $(ecrName)
+    inputs:
+      awsCredentials: $(awsServiceConnection)
+      regionName: us-east-1
+      imageSource: 'imagename'
+      sourceImageName: $(applicationName)
+      sourceImageTag: $(Build.BuildId)
+      pushTag: latest
+      repositoryName: $(ecrName)
+

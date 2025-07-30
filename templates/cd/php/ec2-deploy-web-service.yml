@@ -1,0 +1,148 @@
+# Authority: Harol Restrepo - DevOps Engineer - XpertGroup SAS
+# Everything wrote in this file has been made to work and be compatible with all Novaventa projects (as long as it's been possible).
+# This template is currently on use on pipeline 4008-landing-ti > azure-pipeline.yml
+parameters:
+  # Mandatory parameters
+  - name: applicationName
+    type: string
+  - name: awsAccountEnvironment
+    type: string
+  - name: env
+    type: string
+  # Optional parameters, but you may almost always use them though
+  - name: nodejsVersion
+    type: string
+    default: 'none'
+  - name: containerImage
+    type: string
+    default: 'gradle:6-jdk11'
+  - name: customBuildFolder
+    type: string
+    default: 'none'
+  - name: shouldUploadArtifact
+    type: boolean
+    default: true
+  - name: shouldUploadAzureArtifact
+    type: boolean
+    default: false
+  - name: availabilityZones
+    type: object
+    default:
+    - a
+  - name: previousJobName
+    type: string
+    default: ''
+  - name: libsPath
+    type: string
+    default: '/home/ec2-user/cicd'
+  - name: buildCommand
+    type: string
+    default: 'gradle war'
+  - name: shouldReplaceTokens
+    type: boolean
+    default: false
+  - name: s3artifactfolder
+    type: string
+  - name: s3BucketArtifact
+    type: string
+  - name: ambiente
+    type: string
+    default: 'qa'
+  - name: localPathToUpload
+    type: string
+    default: '$(System.DefaultWorkingDirectory)/dist/'
+  - name: awsServiceConnectionEnvironment
+    type: string
+
+jobs:
+  - job: Build
+    pool: Novaventa2
+    container: ${{parameters.containerImage}}
+    condition: succeeded()
+    cancelTimeoutInMinutes: 0
+    ${{ if ne(parameters.previousJobName, '') }}:
+      dependsOn: ${{parameters.previousJobName}}
+    workspace:
+      clean: all
+    steps:
+      - ${{if ne(parameters.nodejsVersion,'none')}}:
+        - task: NodeTool@0
+          displayName: Installing node v${{parameters.nodejsVersion}}
+          inputs:
+            versionSpec: '${{parameters.nodejsVersion}}'
+      - checkout: self
+        displayName: Clone repository
+        fetchDepth: 1
+      - ${{if eq(parameters.shouldReplaceTokens, 'true')}}:
+        - script: |
+            mkdir parameters
+            if [ -z $(dbparams) ]; then echo "\$variable is empty"; else echo '$(dbparams)' >> parameters/dbparams.json; fi      
+          displayName: 'Set parameters'
+
+        - task: replacetokens@3
+          displayName: 'Set files'
+          inputs:
+            targetFiles: |
+              src/config/db_expresodigital.php
+              index.php
+            encoding: 'auto'
+            writeBOM: true
+            actionOnMissing: 'warn'
+            keepToken: false
+            tokenPrefix: '#{'
+            tokenSuffix: '}#'
+            useLegacyPattern: false
+            variableFiles: 'parameters/**.json'
+            enableTelemetry: true
+        
+      - ${{ if eq(parameters.shouldUploadAzureArtifact, true) }}:
+        - task: PublishBuildArtifacts@1
+          inputs:
+            pathToPublish: ${{parameters.libsPath}}
+            artifactName: 'Artifact'
+          displayName: 'Uploading artifact'
+
+      - ${{ if eq(parameters.shouldUploadArtifact, true) }}:
+        - bash: |
+            if [[ '${{parameters.customBuildFolder}}' != 'none' ]]; then
+              mkdir ${{parameters.customBuildFolder}}
+              cd ${{parameters.customBuildFolder}}
+              echo "entered a custom folder at copying artifact stage - ${{parameters.customBuildFolder}}"
+            fi
+            cp -r ${{ parameters.libsPath }} $(Build.SourcesDirectory)
+          displayName: Copying artifact to main folder
+
+      - task: CopyFilesOverSSH@0
+        inputs:
+          sshEndpoint: 'sc-${{ parameters.awsAccountEnvironment }}-ssh-${{ parameters.applicationName }}-${{ parameters.env }}'
+          sourceFolder: '.'
+          contents: '**'
+          targetFolder: '/home/ec2-user/cicd'
+          readyTimeout: '20000'
+        displayName: 'Uploading artifact to cicd folder'
+
+      - task: SSH@0
+        inputs:
+          sshEndpoint: 'sc-${{ parameters.awsAccountEnvironment }}-ssh-${{ parameters.applicationName }}-${{ parameters.env }}'
+          runOptions: 'inline'
+          inline: |
+            sudo rm -f /home/ec2-user/cicd/azure-pipelines.yml
+            sudo systemctl stop httpd.service
+            sudo rm -rf /var/www/html/CapacidadesComerciales/*
+            sudo cp -r /home/ec2-user/cicd/* /var/www/html/CapacidadesComerciales/
+            sudo chmod -R 755 /var/www/html/CapacidadesComerciales/
+            sudo chown -R apache:apache /var/www/html/CapacidadesComerciales/
+            sudo systemctl start httpd.service
+          readyTimeout: '20000'
+        displayName: Updating webService file to apache folder
+
+      - task: S3Upload@1
+        inputs:
+          awsCredentials: '${{ parameters.awsServiceConnectionEnvironment }}'
+          regionName: 'us-east-1'
+          bucketName: '${{ parameters.s3BucketArtifact }}'
+          sourceFolder: '$(Build.SourcesDirectory)'
+          targetFolder: '${{ parameters.s3artifactfolder }}$(Build.BuildNumber)-${{ parameters.ambiente }}'
+          globExpressions: '**'
+          createBucket: true
+        displayName: Upload to S3 Artifact Folder    
