@@ -50,7 +50,17 @@ keyword. Examples:
   parameters:
     workItemsFile: path/to/workitems.json
     azureServiceConnection: my-service-connection
+    # repository: my-repo
     # targetBranch: dev
+```
+
+The referenced JSON file should contain the repository name and the list of work item IDs:
+
+```json
+{
+  "repository": "my-repo",
+  "workItems": [12345, 67890]
+}
 ```
 
 More examples can be found inside each technology folder.
