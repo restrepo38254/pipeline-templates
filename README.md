@@ -44,6 +44,15 @@ keyword. Examples:
 - template: templates/cd/java/ec2-deploy.yml
 ```
 
+```yaml
+# Create PR from work items
+- template: templates/ci/pr-from-workitems.yml
+  parameters:
+    workItemsFile: path/to/workitems.json
+    azureServiceConnection: my-service-connection
+    # targetBranch: dev
+```
+
 More examples can be found inside each technology folder.
 
 ## License
