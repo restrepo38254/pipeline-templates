@@ -49,9 +49,20 @@ keyword. Examples:
 - template: templates/ci/pr-from-workitems.yml
   parameters:
     workItemsFile: path/to/workitems.json
-    azureServiceConnection: my-service-connection
+    # repository: my-repo
     # targetBranch: dev
 ```
+
+The referenced JSON file should contain the repository name and the list of work item IDs:
+
+```json
+{
+  "repository": "my-repo",
+  "workItems": [12345, 67890]
+}
+```
+
+Make sure the pipeline has **Allow scripts to access the OAuth token** enabled so the template can authenticate with Azure DevOps using `$(System.AccessToken)`.
 
 More examples can be found inside each technology folder.
 
