@@ -41,3 +41,4 @@ steps:
       az repos pr create --repository "$repo_name" --source-branch "$tmp_branch" --target-branch "${{ parameters.targetBranch }}" --work-items $(echo $workitems | tr ' ' ',')
     env:
       AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+        done
