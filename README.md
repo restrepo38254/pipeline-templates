@@ -49,7 +49,7 @@ keyword. Examples:
 - template: templates/ci/pr-from-workitems.yml
   parameters:
     workItemsFile: path/to/workitems.json
-    # repository: my-repo
+    # repository: my-repo        # optional
     # targetBranch: dev
 ```
 
@@ -61,6 +61,8 @@ The referenced JSON file should contain the repository name and the list of work
   "workItems": [12345, 67890]
 }
 ```
+
+If the `repository` parameter is omitted, the name will be read from the JSON file.
 
 Make sure the pipeline has **Allow scripts to access the OAuth token** enabled so the template can authenticate with Azure DevOps using `$(System.AccessToken)`.
 

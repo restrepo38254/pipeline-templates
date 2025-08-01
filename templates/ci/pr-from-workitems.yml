@@ -12,17 +12,23 @@ steps:
 
   - bash: |
       set -e
-      az extension add --name azure-devops
+      az extension show --name azure-devops >/dev/null 2>&1 || az extension add --name azure-devops
       az devops configure --defaults organization=$(System.CollectionUri) project=$(System.TeamProject)
       repo_json=$(jq -r '.repository' "${{ parameters.workItemsFile }}")
       repo_name="${{ parameters.repository }}"
       if [ -z "$repo_name" ]; then
         repo_name="$repo_json"
       fi
+      if [ -z "$repo_name" ]; then
+        echo "Repository name not provided" >&2
+        exit 1
+      fi
       workitems=$(jq -r '.workItems[]' "${{ parameters.workItemsFile }}")
       repo_url=$(az repos show --repository "$repo_name" --query webUrl -o tsv)
-      git clone "$repo_url" repo
+      git -c http.extraheader="AUTHORIZATION: bearer $AZURE_DEVOPS_EXT_PAT" clone "$repo_url" repo
       cd repo
+      git config user.email "automation@example.com"
+      git config user.name "automation"
       tmp_branch="workitems-$(date +%s)"
       git checkout -b "$tmp_branch" "origin/${{ parameters.targetBranch }}"
       for id in $workitems; do
