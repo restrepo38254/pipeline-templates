@@ -1,0 +1,30 @@
+parameters:
+  - name: workItemsFile
+    type: string
+  - name: targetBranch
+    type: string
+    default: 'dev'
+  - name: azureServiceConnection
+    type: string
+
+steps:
+  - checkout: self
+
+  - task: AzureCLI@2
+    inputs:
+      azureSubscription: '${{ parameters.azureServiceConnection }}'
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        set -e
+        workitems=$(jq -r '.workItems[]' "${{ parameters.workItemsFile }}")
+        tmp_branch="workitems-$(date +%s)"
+        git checkout -b "$tmp_branch"
+        for id in $workitems; do
+          commits=$(az boards work-item show --id $id --query "relations[?attributes.name=='Fixed in Commit'].url" -o tsv | sed 's|vstfs:///Git/Commit/||g')
+          for c in $commits; do
+            git cherry-pick $c
+          done
+        done
+        git push origin "$tmp_branch"
+        az repos pr create --source-branch "$tmp_branch" --target-branch "${{ parameters.targetBranch }}" --work-items $(echo $workitems | tr ' ' ',')
