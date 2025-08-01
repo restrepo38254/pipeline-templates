@@ -6,35 +6,39 @@ parameters:
   - name: targetBranch
     type: string
     default: 'dev'
-  - name: azureServiceConnection
-    type: string
 
 steps:
   - checkout: none
 
-  - task: AzureCLI@2
-    inputs:
-      azureSubscription: '${{ parameters.azureServiceConnection }}'
-      scriptType: bash
-      scriptLocation: inlineScript
-      inlineScript: |
-        set -e
-        repo_json=$(jq -r '.repository' "${{ parameters.workItemsFile }}")
-        repo_name=${{ parameters.repository }}
-        if [ "$repo_name" = "" ]; then
-          repo_name="$repo_json"
-        fi
-        workitems=$(jq -r '.workItems[]' "${{ parameters.workItemsFile }}")
-        repo_url=$(az repos show --repository "$repo_name" --query webUrl -o tsv)
-        git clone "$repo_url" repo
-        cd repo
-        tmp_branch="workitems-$(date +%s)"
-        git checkout -b "$tmp_branch" "origin/${{ parameters.targetBranch }}"
-        for id in $workitems; do
-          commits=$(az boards work-item show --id $id --query "relations[?attributes.name=='Fixed in Commit'].url" -o tsv | sed 's|vstfs:///Git/Commit/||g')
-          for c in $commits; do
-            git cherry-pick $c
-          done
+  - bash: |
+      set -e
+      az extension show --name azure-devops >/dev/null 2>&1 || az extension add --name azure-devops
+      az devops configure --defaults organization=$(System.CollectionUri) project=$(System.TeamProject)
+      repo_json=$(jq -r '.repository' "${{ parameters.workItemsFile }}")
+      repo_name="${{ parameters.repository }}"
+      if [ -z "$repo_name" ]; then
+        repo_name="$repo_json"
+      fi
+      if [ -z "$repo_name" ]; then
+        echo "Repository name not provided" >&2
+        exit 1
+      fi
+      workitems=$(jq -r '.workItems[]' "${{ parameters.workItemsFile }}")
+      repo_url=$(az repos show --repository "$repo_name" --query webUrl -o tsv)
+      git -c http.extraheader="AUTHORIZATION: bearer $AZURE_DEVOPS_EXT_PAT" clone "$repo_url" repo
+      cd repo
+      git config user.email "automation@example.com"
+      git config user.name "automation"
+      tmp_branch="workitems-$(date +%s)"
+      git checkout -b "$tmp_branch" "origin/${{ parameters.targetBranch }}"
+      for id in $workitems; do
+        commits=$(az boards work-item show --id $id --query "relations[?attributes.name=='Fixed in Commit'].url" -o tsv | sed 's|vstfs:///Git/Commit/||g')
+        for c in $commits; do
+          git cherry-pick $c
         done
-        git push origin "$tmp_branch"
-        az repos pr create --repository "$repo_name" --source-branch "$tmp_branch" --target-branch "${{ parameters.targetBranch }}" --work-items $(echo $workitems | tr ' ' ',')
+      done
+      git push origin "$tmp_branch"
+      az repos pr create --repository "$repo_name" --source-branch "$tmp_branch" --target-branch "${{ parameters.targetBranch }}" --work-items $(echo $workitems | tr ' ' ',')
+    env:
+      AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+        done

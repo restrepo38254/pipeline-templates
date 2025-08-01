@@ -49,8 +49,7 @@ keyword. Examples:
 - template: templates/ci/pr-from-workitems.yml
   parameters:
     workItemsFile: path/to/workitems.json
-    azureServiceConnection: my-service-connection
-    # repository: my-repo
+
     # targetBranch: dev
 ```
 
