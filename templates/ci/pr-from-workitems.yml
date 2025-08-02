@@ -24,7 +24,14 @@ steps:
         exit 1
       fi
       workitems=$(jq -r '.workItems[]' "${{ parameters.workItemsFile }}")
+      set +e
       repo_url=$(az repos show --repository "$repo_name" --query webUrl -o tsv)
+      status=$?
+      set -e
+      if [ $status -ne 0 ]; then
+        echo "Failed to fetch repo URL. Possible permission issues with AZURE_DEVOPS_EXT_PAT." >&2
+        exit $status
+      fi
       git -c http.extraheader="AUTHORIZATION: bearer $AZURE_DEVOPS_EXT_PAT" clone "$repo_url" repo
       cd repo
       git config user.email "automation@example.com"
